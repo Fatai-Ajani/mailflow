@@ -59,10 +59,10 @@ const s = {
 
 const speedOptions = [
   { label: '60s', sub: 'Safest', value: 60 },
-  { label: '2m', sub: 'Balanced', value: 120 },
-  { label: '5m', sub: 'Conservative', value: 300 },
-  { label: '15m', sub: 'Low volume', value: 900 },
-  { label: '30m', sub: 'Very low volume', value: 1800 },
+  { label: '30s', sub: 'Balanced', value: 30 },
+  { label: '10s', sub: 'Fast', value: 10 },
+  { label: '5s', sub: 'Faster', value: 5 },
+  { label: '1s', sub: 'Fastest', value: 1 },
 ];
 
 const emptyVariation = () => ({
@@ -198,7 +198,7 @@ export default function Campaigns() {
   const validate = () => {
     if (!form.name) return showErr('Please enter a campaign name') || false;
     if (!form.contact_list) return showErr('Please select a contact list') || false;
-    if (!Number.isFinite(speed) || speed < 60) return showErr('Custom delay must be at least 60 seconds') || false;
+    if (!Number.isFinite(speed) || speed < 1) return showErr('Custom delay must be at least 1 second') || false;
     return true;
   };
 
@@ -382,7 +382,7 @@ export default function Campaigns() {
             </div>
           )}
 
-          <div style={s.label}>Sending interval <span style={s.hintText}>(the scheduler checks every minute)</span></div>
+          <div style={s.label}>Sending interval <span style={s.hintText}>(the scheduler processes continuously during each minute)</span></div>
           <div style={s.speedGrid}>
             {speedOptions.map(opt => (
               <div key={opt.value} style={{ ...s.speedOpt, ...(speed === opt.value ? s.speedOptSel : {}) }} onClick={() => setSpeed(opt.value)}>
@@ -395,7 +395,7 @@ export default function Campaigns() {
           <div style={s.row2}>
             <div>
               <div style={s.label}>Custom delay (seconds)</div>
-              <input style={s.input} type="number" min="60" step="60" value={speed} onChange={e => setSpeed(Number(e.target.value))} />
+              <input style={s.input} type="number" min="1" step="1" value={speed} onChange={e => setSpeed(Number(e.target.value))} />
             </div>
             {getEstimate() && (
               <div style={{ ...s.infoBox, marginTop: '20px' }}>

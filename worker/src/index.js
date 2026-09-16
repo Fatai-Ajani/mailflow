@@ -48,6 +48,8 @@ function isWithinWindow(startTime, endTime, date = new Date()) {
   return current >= (startHour * 60 + startMinute) && current <= (endHour * 60 + endMinute);
 }
 
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
 function requirePin(request, env) {
   const configured = env.APP_PIN;
   return Boolean(configured && request.headers.get('x-app-pin') === configured);
@@ -139,38 +141,52 @@ async function sendCampaignItem(env, item) {
   ]);
 }
 
-async function processCampaigns(env) {
-  const campaigns = await rows(env.DB.prepare("SELECT * FROM campaigns WHERE status = 'running'"));
-  for (const campaign of campaigns) {
-    const delaySeconds = Math.max(60, Number(campaign.delay_seconds) || 60);
-    if (campaign.last_sent_at && Date.now() - Date.parse(campaign.last_sent_at) < delaySeconds * 1000) continue;
-    if (campaign.schedule_type === 'window' && !isWithinWindow(campaign.start_time, campaign.end_time)) continue;
-    const item = await one(env.DB.prepare(`
+async function processCampaignOnce(env, campaign) {
+  const delaySeconds = Math.max(1, Number(campaign.delay_seconds) || 1);
+  if (campaign.last_sent_at && Date.now() - Date.parse(campaign.last_sent_at) < delaySeconds * 1000) return false;
+  if (campaign.schedule_type === 'window' && !isWithinWindow(campaign.start_time, campaign.end_time)) return false;
+
+  const item = await one(env.DB.prepare(`
       SELECT q.*, c.content_variations, a.email AS account_email, a.display_name, a.access_token, a.refresh_token, a.token_expiry
       FROM queue q JOIN campaigns c ON c.id = q.campaign_id JOIN accounts a ON a.id = q.account_id
       WHERE q.campaign_id = ? AND q.status = 'pending' AND a.status = 'active'
       ORDER BY q.id LIMIT 1
     `).bind(campaign.id));
-    if (!item) {
-      const pending = await one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE campaign_id = ? AND status = 'pending'").bind(campaign.id));
-      if (!Number(pending?.count)) await env.DB.prepare("UPDATE campaigns SET status = 'completed' WHERE id = ?").bind(campaign.id).run();
-      continue;
+  if (!item) {
+    const pending = await one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE campaign_id = ? AND status = 'pending'").bind(campaign.id));
+    if (!Number(pending?.count)) await env.DB.prepare("UPDATE campaigns SET status = 'completed' WHERE id = ?").bind(campaign.id).run();
+    return false;
+  }
+
+  try {
+    await sendCampaignItem(env, item);
+  } catch (error) {
+    const retries = Number(item.retry_count || 0) + 1;
+    if (retries < 3) {
+      const fallbackAccounts = await rows(env.DB.prepare("SELECT id FROM accounts WHERE status = 'active' AND id != ? ORDER BY RANDOM() LIMIT 1").bind(item.account_id));
+      const nextAccount = fallbackAccounts[0]?.id || item.account_id;
+      await env.DB.prepare("UPDATE queue SET retry_count = ?, last_error = ?, account_id = ? WHERE id = ?").bind(retries, String(error.message), nextAccount, item.id).run();
+    } else {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE queue SET status = 'failed', retry_count = ?, error = ? WHERE id = ?").bind(retries, String(error.message), item.id),
+        env.DB.prepare('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?').bind(item.campaign_id),
+      ]);
     }
-    try {
-      await sendCampaignItem(env, item);
-    } catch (error) {
-      const retries = Number(item.retry_count || 0) + 1;
-      if (retries < 3) {
-        const fallbackAccounts = await rows(env.DB.prepare("SELECT id FROM accounts WHERE status = 'active' AND id != ? ORDER BY RANDOM() LIMIT 1").bind(item.account_id));
-        const nextAccount = fallbackAccounts[0]?.id || item.account_id;
-        await env.DB.prepare("UPDATE queue SET retry_count = ?, last_error = ?, account_id = ? WHERE id = ?").bind(retries, String(error.message), nextAccount, item.id).run();
-      } else {
-        await env.DB.batch([
-          env.DB.prepare("UPDATE queue SET status = 'failed', retry_count = ?, error = ? WHERE id = ?").bind(retries, String(error.message), item.id),
-          env.DB.prepare('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?').bind(item.campaign_id),
-        ]);
-      }
+  }
+
+  return true;
+}
+
+async function processCampaigns(env) {
+  const deadline = Date.now() + 55000;
+  while (Date.now() < deadline) {
+    const campaigns = await rows(env.DB.prepare("SELECT * FROM campaigns WHERE status = 'running'"));
+    if (!campaigns.length) return;
+    for (const campaign of campaigns) {
+      if (Date.now() >= deadline) return;
+      await processCampaignOnce(env, campaign);
     }
+    await wait(250);
   }
 }
 
@@ -254,7 +270,7 @@ async function campaigns(request, env, parts, origin) {
     if (!body.name?.trim() || !body.contact_list?.trim() || !hasContent) return json({ error: 'Campaign name, contact list, and subject or body are required' }, 400, origin);
     const count = await one(env.DB.prepare('SELECT COUNT(*) AS count FROM contacts WHERE list_name = ?').bind(body.contact_list));
     const delaySeconds = Number(body.delay_seconds);
-    if (!Number.isFinite(delaySeconds) || delaySeconds < 60) return json({ error: 'Custom delay must be at least 60 seconds on the current scheduler' }, 400, origin);
+    if (!Number.isFinite(delaySeconds) || delaySeconds < 1) return json({ error: 'Custom delay must be at least 1 second' }, 400, origin);
     const result = await env.DB.prepare('INSERT INTO campaigns (name, subject, body_html, body_plain, contact_list, delay_seconds, start_time, end_time, schedule_type, content_variations, content_mode, total_contacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || variations[0]?.subject || '', body.body_html || variations[0]?.body_html || '', body.body_plain || variations[0]?.body_plain || '', body.contact_list.trim(), delaySeconds, body.start_time || '00:00', body.end_time || '23:59', body.schedule_type || 'immediate', JSON.stringify(variations), body.content_mode || 'random', Number(count?.count) || 0).first();
     return json({ id: result.id, success: true }, 200, origin);
   }
