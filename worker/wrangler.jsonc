@@ -21,7 +21,8 @@
 		}
 	],
 	"vars": {
-		"APP_ORIGIN": "https://mailflow-frontend-6qk.pages.dev"
+		"APP_ORIGIN": "https://mailflow-frontend-6qk.pages.dev",
+		"BUSINESS_TIME_ZONE": "Africa/Lagos"
 	},
 	"env": {
 		"local": {

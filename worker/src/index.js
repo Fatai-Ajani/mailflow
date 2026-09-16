@@ -48,6 +48,10 @@ function isWithinWindow(startTime, endTime, date = new Date()) {
   return current >= (startHour * 60 + startMinute) && current <= (endHour * 60 + endMinute);
 }
 
+function localDate(value, timeZone) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'Africa/Lagos' }).format(value);
+}
+
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function requirePin(request, env) {
@@ -194,6 +198,13 @@ async function resetDailyCounts(env) {
   await env.DB.prepare("UPDATE accounts SET daily_sent = 0, last_reset = CURRENT_TIMESTAMP").run();
 }
 
+async function ensureDailyReset(env) {
+  const currentDate = localDate(new Date(), env.BUSINESS_TIME_ZONE);
+  const accounts = await rows(env.DB.prepare('SELECT last_reset FROM accounts'));
+  const stale = accounts.some(account => !account.last_reset || localDate(new Date(`${account.last_reset.replace(' ', 'T')}Z`), env.BUSINESS_TIME_ZONE) !== currentDate);
+  if (stale) await resetDailyCounts(env);
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   const origin = originFor(request, env);
@@ -238,7 +249,10 @@ async function accounts(request, env, parts, origin) {
     await env.DB.prepare(`INSERT INTO accounts (email, access_token, refresh_token, token_expiry) VALUES (?, ?, ?, ?) ON CONFLICT(email) DO UPDATE SET access_token = excluded.access_token, refresh_token = COALESCE(excluded.refresh_token, accounts.refresh_token), token_expiry = excluded.token_expiry, status = 'active'`).bind(user.email, tokens.access_token, tokens.refresh_token || null, Date.now() + (tokens.expires_in * 1000)).run();
     return text('<h2>Account connected successfully</h2><p>You can close this tab.</p>', 200, origin);
   }
-  if (request.method === 'GET' && parts.length === 0) return json(await rows(env.DB.prepare('SELECT id, email, display_name, status, daily_sent, last_reset, created_at FROM accounts ORDER BY created_at DESC')), 200, origin);
+  if (request.method === 'GET' && parts.length === 0) {
+    await ensureDailyReset(env);
+    return json(await rows(env.DB.prepare('SELECT id, email, display_name, status, daily_sent, last_reset, created_at FROM accounts ORDER BY created_at DESC')), 200, origin);
+  }
   if (request.method === 'POST' && parts[0] === 'display-name' && parts[1] === 'batch') {
     const body = await bodyJson(request); const ids = (body.account_ids || []).map(Number).filter(Number.isInteger);
     if (!ids.length || !String(body.display_name || '').trim()) return json({ error: 'Accounts and display name are required' }, 400, origin);
@@ -326,12 +340,13 @@ async function analytics(request, env, origin) {
 
 async function queue(request, env, parts, origin) {
   if (parts[0] === 'stats') {
+    await ensureDailyReset(env);
     const values = await Promise.all([
       one(env.DB.prepare('SELECT COUNT(*) AS count FROM queue')),
       one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'pending'")),
       one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'sent'")),
       one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'failed'")),
-      one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'sent' AND date(sent_at) = date('now')")),
+      one(env.DB.prepare('SELECT COALESCE(SUM(daily_sent), 0) AS count FROM accounts')),
       one(env.DB.prepare("SELECT COUNT(*) AS count FROM campaigns WHERE status = 'running'")),
       one(env.DB.prepare("SELECT COUNT(*) AS count FROM accounts WHERE status = 'active'")),
     ]);
@@ -350,6 +365,7 @@ async function queue(request, env, parts, origin) {
 }
 
 async function dashboard(env, origin) {
+  await ensureDailyReset(env);
   const stats = await queue(new Request('https://internal/api/queue/stats'), env, ['stats'], origin);
   const campaigns = await rows(env.DB.prepare('SELECT c.*, COUNT(q.id) FILTER (WHERE q.status = \'pending\') AS pending_count FROM campaigns c LEFT JOIN queue q ON q.campaign_id = c.id GROUP BY c.id ORDER BY c.created_at DESC LIMIT 10'));
   return json({ stats: await stats.json(), campaigns }, 200, origin);
@@ -360,10 +376,7 @@ export default {
     try { return await handle(request, env); } catch (error) { return json({ error: error.message || 'Internal server error' }, 500, originFor(request, env)); }
   },
   async scheduled(controller, env, ctx) {
-    const scheduledAt = new Date(controller.scheduledTime);
-    const work = scheduledAt.getUTCHours() === 0 && scheduledAt.getUTCMinutes() === 0
-      ? Promise.all([resetDailyCounts(env), processCampaigns(env)])
-      : processCampaigns(env);
+    const work = Promise.all([ensureDailyReset(env), processCampaigns(env)]);
     ctx.waitUntil(work);
   },
 };
