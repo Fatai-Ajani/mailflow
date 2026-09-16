@@ -162,7 +162,8 @@ async function handle(request, env) {
   }
 
   if (parts[0] !== 'api') return json({ error: 'Not found' }, 404, origin);
-  if (parts[1] !== 'accounts' || !((parts[2] === 'auth') || (parts[2] === 'callback'))) {
+  const publicRoute = parts[1] === 'dashboard' || (parts[1] === 'accounts' && (parts[2] === 'auth' || parts[2] === 'callback'));
+  if (!publicRoute) {
     const denied = requireAuth(request, env, origin);
     if (denied) return denied;
   }
