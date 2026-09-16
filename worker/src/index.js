@@ -30,6 +30,17 @@ function csvEmails(value) {
   return lines.slice(hasHeader ? 1 : 0).map(line => line.split(',')[0]).join('\n');
 }
 
+function shuffle(values) {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    const swapIndex = random[0] % (index + 1);
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
 function requirePin(request, env) {
   const configured = env.APP_PIN;
   return Boolean(configured && request.headers.get('x-app-pin') === configured);
@@ -139,7 +150,9 @@ async function processCampaigns(env) {
     } catch (error) {
       const retries = Number(item.retry_count || 0) + 1;
       if (retries < 3) {
-        await env.DB.prepare("UPDATE queue SET retry_count = ?, last_error = ? WHERE id = ?").bind(retries, String(error.message), item.id).run();
+        const fallbackAccounts = await rows(env.DB.prepare("SELECT id FROM accounts WHERE status = 'active' AND id != ? ORDER BY RANDOM() LIMIT 1").bind(item.account_id));
+        const nextAccount = fallbackAccounts[0]?.id || item.account_id;
+        await env.DB.prepare("UPDATE queue SET retry_count = ?, last_error = ?, account_id = ? WHERE id = ?").bind(retries, String(error.message), nextAccount, item.id).run();
       } else {
         await env.DB.batch([
           env.DB.prepare("UPDATE queue SET status = 'failed', retry_count = ?, error = ? WHERE id = ?").bind(retries, String(error.message), item.id),
@@ -148,6 +161,10 @@ async function processCampaigns(env) {
       }
     }
   }
+}
+
+async function resetDailyCounts(env) {
+  await env.DB.prepare("UPDATE accounts SET daily_sent = 0, last_reset = CURRENT_TIMESTAMP").run();
 }
 
 async function handle(request, env) {
@@ -232,7 +249,7 @@ async function campaigns(request, env, parts, origin) {
   if (request.method === 'POST' && parts[1] === 'launch') {
     const campaign = await one(env.DB.prepare('SELECT * FROM campaigns WHERE id = ?').bind(id));
     if (!campaign) return json({ error: 'Campaign not found' }, 404, origin);
-    const accounts = await rows(env.DB.prepare("SELECT id FROM accounts WHERE status = 'active'"));
+    const accounts = shuffle(await rows(env.DB.prepare("SELECT id FROM accounts WHERE status = 'active'")));
     const contacts = await rows(env.DB.prepare('SELECT email FROM contacts WHERE list_name = ?').bind(campaign.contact_list));
     if (!accounts.length || !contacts.length) return json({ error: !accounts.length ? 'No active Gmail accounts connected' : 'No contacts found in this list' }, 400, origin);
     await env.DB.prepare("DELETE FROM queue WHERE campaign_id = ? AND status = 'pending'").bind(id).run();
@@ -279,7 +296,26 @@ async function analytics(request, env, origin) {
 }
 
 async function queue(request, env, parts, origin) {
-  if (parts[0] === 'stats') { const values = await Promise.all(['', "status = 'pending'", "status = 'sent'", "status = 'failed'"].map(condition => one(env.DB.prepare(`SELECT COUNT(*) AS count FROM queue${condition ? ` WHERE ${condition}` : ''}`)))); return json({ total: Number(values[0].count), pending: Number(values[1].count), sent: Number(values[2].count), failed: Number(values[3].count) }, 200, origin); }
+  if (parts[0] === 'stats') {
+    const values = await Promise.all([
+      one(env.DB.prepare('SELECT COUNT(*) AS count FROM queue')),
+      one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'pending'")),
+      one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'sent'")),
+      one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'failed'")),
+      one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE status = 'sent' AND date(sent_at) = date('now')")),
+      one(env.DB.prepare("SELECT COUNT(*) AS count FROM campaigns WHERE status = 'running'")),
+      one(env.DB.prepare("SELECT COUNT(*) AS count FROM accounts WHERE status = 'active'")),
+    ]);
+    return json({
+      total: Number(values[0]?.count || 0),
+      pending: Number(values[1]?.count || 0),
+      sent: Number(values[2]?.count || 0),
+      failed: Number(values[3]?.count || 0),
+      today_sent: Number(values[4]?.count || 0),
+      active_campaigns: Number(values[5]?.count || 0),
+      active_accounts: Number(values[6]?.count || 0),
+    }, 200, origin);
+  }
   if (request.method === 'GET') return json(await rows(env.DB.prepare('SELECT q.*, a.email AS account_email, c.name AS campaign_name FROM queue q LEFT JOIN accounts a ON a.id = q.account_id LEFT JOIN campaigns c ON c.id = q.campaign_id ORDER BY q.id DESC LIMIT 100')), 200, origin);
   return json({ error: 'Not found' }, 404, origin);
 }
@@ -295,6 +331,10 @@ export default {
     try { return await handle(request, env); } catch (error) { return json({ error: error.message || 'Internal server error' }, 500, originFor(request, env)); }
   },
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(processCampaigns(env));
+    const scheduledAt = new Date(controller.scheduledTime);
+    const work = scheduledAt.getUTCHours() === 0 && scheduledAt.getUTCMinutes() === 0
+      ? Promise.all([resetDailyCounts(env), processCampaigns(env)])
+      : processCampaigns(env);
+    ctx.waitUntil(work);
   },
 };
