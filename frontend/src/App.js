@@ -3,38 +3,35 @@ import Dashboard from './pages/Dashboard';
 import Campaigns from './pages/Campaigns';
 import Contacts from './pages/Contacts';
 import Accounts from './pages/Accounts';
-import Logs from './pages/Logs';
 import Analytics from './pages/Analytics';
-import Followups from './pages/Followups';
 import Templates from './pages/Templates';
 import PinModal from './components/PinModal';
+import { setAppPin } from './api';
 
 const styles = {
   shell: { display: 'flex', minHeight: '100vh' },
-  sidebar: { width: '200px', background: '#fff', borderRight: '0.5px solid #e0e0d8', display: 'flex', flexDirection: 'column', padding: '16px 0' },
-  logo: { padding: '0 16px 16px', fontSize: '16px', fontWeight: '600', borderBottom: '0.5px solid #e0e0d8', marginBottom: '12px' },
-  logoSub: { fontSize: '11px', fontWeight: '400', color: '#999', display: 'block', marginTop: '2px' },
-  navItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 16px', fontSize: '13px', color: '#666', cursor: 'pointer', transition: 'background 0.1s' },
-  navItemActive: { background: '#f5f5f0', color: '#111', fontWeight: '500' },
+  sidebar: { width: '224px', background: '#fffdf8', borderRight: '1px solid #e1e5dd', display: 'flex', flexDirection: 'column', padding: '22px 0' },
+  logo: { padding: '0 22px 20px', fontSize: '22px', fontWeight: '600', borderBottom: '1px solid #e1e5dd', marginBottom: '14px' },
+  logoSub: { fontSize: '11px', fontWeight: '400', color: '#718078', display: 'block', marginTop: '4px', letterSpacing: '0.08em', textTransform: 'uppercase' },
+  navItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 22px', fontSize: '13px', color: '#718078', cursor: 'pointer', transition: 'background 0.1s' },
+  navItemActive: { background: '#eef2eb', color: '#17211b', fontWeight: '600', borderRight: '3px solid #35613d' },
   dot: { width: '7px', height: '7px', borderRadius: '50%' },
-  main: { flex: 1, padding: '24px', overflowY: 'auto', background: '#f5f5f0' },
-  statusBar: { padding: '12px 16px', borderTop: '0.5px solid #e0e0d8', marginTop: 'auto' },
-  statusLabel: { fontSize: '11px', color: '#999' },
+  main: { flex: 1, padding: '34px 42px', overflowY: 'auto', background: '#f6f7f2' },
+  statusBar: { padding: '16px 22px', borderTop: '1px solid #e1e5dd', marginTop: 'auto' },
+  statusLabel: { fontSize: '11px', color: '#718078', textTransform: 'uppercase', letterSpacing: '0.08em' },
   statusRow: { display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' },
-  statusDot: { width: '7px', height: '7px', borderRadius: '50%', background: '#3B6D11' },
-  statusText: { fontSize: '12px', fontWeight: '500', color: '#111' },
-  lockBadge: { fontSize: '10px', padding: '2px 6px', borderRadius: '999px', background: '#f5f5f0', color: '#888', marginLeft: 'auto', border: '0.5px solid #e0e0d8' },
+  statusDot: { width: '7px', height: '7px', borderRadius: '50%', background: '#35613d' },
+  statusText: { fontSize: '12px', fontWeight: '500', color: '#17211b' },
+  lockBadge: { fontSize: '10px', padding: '2px 6px', borderRadius: '999px', background: '#eef2eb', color: '#718078', marginLeft: 'auto', border: '1px solid #e1e5dd' },
 };
 
 const navItems = [
-  { id: 'dashboard', label: 'Dashboard', color: '#3B6D11', protected: false },
-  { id: 'campaigns', label: 'Campaigns', color: '#185FA5', protected: true },
-  { id: 'templates', label: 'Templates', color: '#534AB7', protected: true },
-  { id: 'contacts', label: 'Contacts', color: '#D85A30', protected: true },
-  { id: 'accounts', label: 'Gmail Accounts', color: '#854F0B', protected: true },
-  { id: 'followups', label: 'Follow-ups', color: '#0E7C6E', protected: true },
-  { id: 'analytics', label: 'Analytics', color: '#0E9E8E', protected: false },
-  { id: 'logs', label: 'Logs', color: '#888', protected: false },
+  { id: 'dashboard', label: 'Dashboard', color: '#35613d', protected: false },
+  { id: 'campaigns', label: 'Campaigns', color: '#6d8068', protected: true },
+  { id: 'templates', label: 'Templates', color: '#8c7651', protected: true },
+  { id: 'contacts', label: 'Contacts', color: '#9a6251', protected: true },
+  { id: 'accounts', label: 'Gmail Accounts', color: '#7d7652', protected: true },
+  { id: 'analytics', label: 'Analytics', color: '#52736b', protected: true },
 ];
 
 export default function App() {
@@ -56,6 +53,7 @@ export default function App() {
   };
 
   const handlePinSuccess = useCallback((pin) => {
+    setAppPin(pin);
     setPinVerified(true);
     setShowPinModal(false);
     if (pendingPage) {
@@ -91,15 +89,13 @@ export default function App() {
     case 'templates': return <Templates requirePin={requirePin} />;
     case 'contacts': return <Contacts requirePin={requirePin} />;
     case 'accounts': return <Accounts requirePin={requirePin} />;
-    case 'followups': return <Followups requirePin={requirePin} />;
     case 'analytics': return <Analytics />;
-    case 'logs': return <Logs />;
     default: return <Dashboard />;
   }
 };
 
   return (
-    <div style={styles.shell}>
+    <div className="app-shell" style={styles.shell}>
       {showPinModal && (
         <PinModal
           onSuccess={handlePinSuccess}
@@ -108,15 +104,17 @@ export default function App() {
         />
       )}
 
-      <div style={styles.sidebar}>
-        <div style={styles.logo}>
+      <div className="app-sidebar" style={styles.sidebar}>
+        <div className="app-logo" style={styles.logo}>
           MailFlow
           <span style={styles.logoSub}>Email automation</span>
         </div>
 
+        <div className="app-nav">
         {navItems.map(item => (
           <div
             key={item.id}
+            className="app-nav-item"
             style={{ ...styles.navItem, ...(page === item.id ? styles.navItemActive : {}) }}
             onClick={() => handleNavClick(item)}
           >
@@ -127,8 +125,9 @@ export default function App() {
             )}
           </div>
         ))}
+        </div>
 
-        <div style={styles.statusBar}>
+        <div className="app-status" style={styles.statusBar}>
           <div style={styles.statusLabel}>System status</div>
           <div style={styles.statusRow}>
             <div style={styles.statusDot} />
@@ -137,7 +136,7 @@ export default function App() {
           {pinVerified && (
             <div
               style={{ fontSize: '11px', color: '#3B6D11', marginTop: '6px', cursor: 'pointer' }}
-              onClick={() => { setPinVerified(false); setPage('dashboard'); }}
+              onClick={() => { setAppPin(null); setPinVerified(false); setPage('dashboard'); }}
             >
               🔓 Unlocked · Click to lock
             </div>
@@ -145,7 +144,7 @@ export default function App() {
         </div>
       </div>
 
-      <div style={styles.main}>
+      <div className="app-main" style={styles.main}>
         {renderPage()}
       </div>
     </div>

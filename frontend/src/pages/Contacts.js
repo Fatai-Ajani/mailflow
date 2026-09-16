@@ -53,7 +53,7 @@ export default function Contacts() {
     if (emailArr.length === 0) return showErr('No valid emails found');
     try {
       const res = await addManualContacts({ list_name: listName, emails: emailArr });
-      showMsg(`Added ${res.data.added} emails to "${listName}"`);
+      showMsg(`Added ${res.data.added} emails to "${listName}"${res.data.duplicates ? ` · ${res.data.duplicates} duplicates skipped` : ''}${res.data.rejected ? ` · ${res.data.rejected} invalid entries skipped` : ''}`);
       setListName(''); setEmails('');
       load();
     } catch (e) { showErr('Error adding contacts'); }
@@ -66,7 +66,7 @@ export default function Contacts() {
       formData.append('file', file);
       formData.append('list_name', csvListName);
       const res = await uploadCSV(formData);
-      showMsg(`Imported ${res.data.added} emails to "${csvListName}"`);
+      showMsg(`Imported ${res.data.added} emails to "${csvListName}"${res.data.duplicates ? ` · ${res.data.duplicates} duplicates skipped` : ''}${res.data.rejected ? ` · ${res.data.rejected} invalid entries skipped` : ''}`);
       setCsvListName(''); setFile(null);
       load();
     } catch (e) { showErr('Error uploading file'); }
@@ -94,12 +94,12 @@ export default function Contacts() {
 
       <div style={s.grid}>
         <div style={s.card}>
-          <div style={s.cardTitle}>Upload CSV or Excel</div>
+          <div style={s.cardTitle}>Upload CSV</div>
           <div style={s.label}>List name</div>
           <input style={s.input} placeholder="e.g. Black Friday list" value={csvListName} onChange={e => setCsvListName(e.target.value)} />
           <div style={s.uploadZone} onClick={() => document.getElementById('csvfile').click()}>
             <div style={s.uploadTitle}>{file ? file.name : 'Drop your file here'}</div>
-            <div style={s.uploadSub}>CSV file · must have an "email" column</div>
+            <div style={s.uploadSub}>CSV file · email column preferred, first column also accepted</div>
             <button style={s.btn}>Browse file</button>
             <input id="csvfile" type="file" accept=".csv" style={{ display: 'none' }} onChange={e => setFile(e.target.files[0])} />
           </div>
@@ -110,8 +110,8 @@ export default function Contacts() {
           <div style={s.cardTitle}>Paste emails manually</div>
           <div style={s.label}>List name</div>
           <input style={s.input} placeholder="e.g. Cold leads batch 1" value={listName} onChange={e => setListName(e.target.value)} />
-          <div style={s.label}>Emails (one per line)</div>
-          <textarea style={s.textarea} placeholder={'john@example.com\nsarah@business.com\nmike@company.ng'} value={emails} onChange={e => setEmails(e.target.value)} />
+          <div style={s.label}>Emails</div>
+          <textarea style={s.textarea} placeholder={'Paste one per line, or separated by commas/spaces\njohn@example.com\nsarah@business.com'} value={emails} onChange={e => setEmails(e.target.value)} />
           <button style={s.btnPrimary} onClick={handleManual}>Import emails</button>
         </div>
       </div>

@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
-
-const BASE_URL = process.env.REACT_APP_API_URL || 'https://mailflow-production-db59.up.railway.app';
+import { getDashboard } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -11,10 +9,9 @@ const s = {
   statLabel: { fontSize: '11px', color: '#888', marginBottom: '4px' },
   statNum: { fontSize: '24px', fontWeight: '500', color: '#111' },
   statSub: { fontSize: '11px', color: '#888', marginTop: '2px' },
-  row: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' },
+  row: { display: 'grid', gridTemplateColumns: '1fr', gap: '12px', marginBottom: '12px' },
   card: { background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '12px', padding: '14px 16px' },
   cardTitle: { fontSize: '13px', fontWeight: '500', color: '#111', marginBottom: '12px' },
-  queueItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: '0.5px solid #e0e0d8', fontSize: '12px' },
   campItem: { padding: '8px 0', borderBottom: '0.5px solid #e0e0d8' },
   campName: { fontSize: '13px', color: '#111', marginBottom: '4px' },
   campSub: { fontSize: '11px', color: '#888' },
@@ -34,7 +31,7 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     try {
-      const res = await axios.get(`${BASE_URL}/api/dashboard`, { timeout: 10000 });
+      const res = await getDashboard();
       setData(res.data);
       setOffline(false);
       setLoading(false);
@@ -46,7 +43,7 @@ export default function Dashboard() {
         setRetrying(true);
         setTimeout(async () => {
           try {
-            const res = await axios.get(`${BASE_URL}/api/dashboard`, { timeout: 10000 });
+            const res = await getDashboard();
             setData(res.data);
             setOffline(false);
           } catch (e) {
@@ -73,13 +70,8 @@ export default function Dashboard() {
     };
   }, [load]);
 
-  const { stats, campaigns, queue } = data;
+  const { stats, campaigns } = data;
   const runningCampaigns = (campaigns || []).filter(c => c.status === 'running');
-
-  const getStatusDot = (status) => {
-    const colors = { sent: '#3B6D11', failed: '#A32D2D', pending: '#854F0B', retrying: '#185FA5' };
-    return <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: colors[status] || '#ccc', flexShrink: 0 }} />;
-  };
 
   return (
     <div>
@@ -154,22 +146,6 @@ export default function Dashboard() {
               })}
             </div>
 
-            <div style={s.card}>
-              <div style={s.cardTitle}>Live send queue</div>
-              {(queue || []).length === 0 && (
-                <div style={{ fontSize: '13px', color: '#888' }}>No recent activity</div>
-              )}
-              {(queue || []).map(item => (
-                <div key={item.id} style={s.queueItem}>
-                  {getStatusDot(item.status)}
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: '#111' }}>{item.recipient_email}</div>
-                    <div style={{ color: '#888', fontSize: '11px' }}>via {item.account_email}</div>
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#888' }}>{item.status}</div>
-                </div>
-              ))}
-            </div>
           </div>
         </>
       )}

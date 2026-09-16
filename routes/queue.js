@@ -53,23 +53,4 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-router.get('/logs', async (req, res) => {
-  try {
-    const logs = await db.all(`
-      SELECT 
-        l.*,
-        a.email as account_email,
-        c.name as campaign_name
-      FROM logs l
-      LEFT JOIN accounts a ON l.account_id = a.id
-      LEFT JOIN campaigns c ON l.campaign_id = c.id
-      ORDER BY l.created_at DESC
-      LIMIT 200
-    `);
-    res.json(logs);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 module.exports = router;

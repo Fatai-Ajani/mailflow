@@ -1,0 +1,4 @@
+APP_PIN=choose-a-local-pin
+GOOGLE_CLIENT_ID=not-configured-yet
+GOOGLE_CLIENT_SECRET=not-configured-yet
+GOOGLE_REDIRECT_URI=http://localhost:8787/api/accounts/callback

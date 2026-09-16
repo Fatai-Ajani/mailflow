@@ -1,0 +1,37 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "mailflow-api",
+	"main": "src/index.js",
+	"compatibility_date": "2026-09-16",
+	"observability": {
+		"enabled": true
+	},
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "mailflow",
+			"database_id": "7965622f-659e-4466-8d46-d825b9893428",
+			"migrations_dir": "migrations",
+			"remote": true
+		}
+	],
+	"vars": {
+		"APP_ORIGIN": "https://mailflow.pages.dev"
+	},
+	"env": {
+		"local": {
+			"name": "mailflow-api-local",
+			"vars": {
+				"APP_ORIGIN": "http://localhost:3000"
+			},
+			"triggers": {
+				"crons": []
+			}
+		}
+	}
+}

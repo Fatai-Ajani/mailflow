@@ -40,6 +40,18 @@ router.post('/', async (req, res) => {
       parsedVariations = [];
     }
 
+    const hasContent = Boolean(
+      subject?.trim() || body_html?.trim() || body_plain?.trim() ||
+      parsedVariations.some(variation => variation && (variation.subject?.trim() || variation.body_html?.trim() || variation.body_plain?.trim()))
+    );
+    if (!hasContent) return res.status(400).json({ error: 'Add a subject or message body before saving the campaign' });
+
+    const delay = Number(delay_seconds || 30);
+    if (!Number.isFinite(delay) || delay < 1) return res.status(400).json({ error: 'Sending delay must be at least 1 second' });
+    if (schedule_type === 'window' && (!/^\d{2}:\d{2}$/.test(start_time || '') || !/^\d{2}:\d{2}$/.test(end_time || ''))) {
+      return res.status(400).json({ error: 'A valid sending window is required' });
+    }
+
     console.log(`Creating campaign with ${parsedVariations.length} variations`);
     parsedVariations.forEach((v, i) => {
       console.log(`Variation ${i + 1}: ${v.subject || '(no subject)'}`);
@@ -62,7 +74,7 @@ router.post('/', async (req, res) => {
       body_html || (parsedVariations[0]?.body_html || ''),
       body_plain || (parsedVariations[0]?.body_plain || ''),
       contact_list,
-      delay_seconds || 30,
+      delay,
       start_time || '00:00',
       end_time || '23:59',
       contacts.count,
@@ -103,6 +115,13 @@ router.post('/:id/launch', async (req, res) => {
 
     if (accounts.length === 0) {
       return res.status(400).json({ error: 'No active Gmail accounts connected' });
+    }
+
+    const hasContent = campaign.subject?.trim() || campaign.body_html?.trim() || campaign.body_plain?.trim() ||
+      (() => { try { return JSON.parse(campaign.content_variations || '[]').some(v => v.subject?.trim() || v.body_html?.trim() || v.body_plain?.trim()); } catch (e) { return false; } })();
+    if (!hasContent) return res.status(400).json({ error: 'Campaign has no subject or message body' });
+    if (!Number.isFinite(Number(campaign.delay_seconds)) || Number(campaign.delay_seconds) < 1) {
+      return res.status(400).json({ error: 'Campaign sending delay is invalid' });
     }
 
     await db.run(
@@ -150,9 +169,6 @@ router.post('/:id/resume', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     await db.run('DELETE FROM queue WHERE campaign_id = $1', [req.params.id]);
-    await db.run('DELETE FROM opens WHERE campaign_id = $1', [req.params.id]);
-    await db.run('DELETE FROM clicks WHERE campaign_id = $1', [req.params.id]);
-    await db.run('DELETE FROM logs WHERE campaign_id = $1', [req.params.id]);
     await db.run('DELETE FROM campaigns WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {

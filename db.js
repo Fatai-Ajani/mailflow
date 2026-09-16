@@ -9,6 +9,8 @@ async function initDB() {
   const client = await pool.connect();
   try {
     await client.query(`
+      DROP TABLE IF EXISTS followup_queue, followups, exclusions CASCADE;
+
       CREATE TABLE IF NOT EXISTS accounts (
         id SERIAL PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
@@ -28,6 +30,14 @@ async function initDB() {
         email TEXT NOT NULL,
         created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       );
+
+      UPDATE contacts SET email = lower(trim(email));
+      DELETE FROM contacts older
+      USING contacts newer
+      WHERE older.ctid < newer.ctid
+        AND lower(older.email) = lower(newer.email)
+        AND older.list_name = newer.list_name;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_list_email ON contacts (list_name, email);
 
       CREATE TABLE IF NOT EXISTS campaigns (
         id SERIAL PRIMARY KEY,
@@ -71,38 +81,10 @@ async function initDB() {
         error TEXT
       );
 
-      CREATE TABLE IF NOT EXISTS logs (
-        id SERIAL PRIMARY KEY,
-        campaign_id INTEGER,
-        account_id INTEGER,
-        recipient_email TEXT,
-        status TEXT,
-        message TEXT,
-        retry_count INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
-      );
+      ALTER TABLE queue DROP COLUMN IF EXISTS message_id;
+      ALTER TABLE queue DROP COLUMN IF EXISTS thread_id;
 
-      CREATE TABLE IF NOT EXISTS opens (
-        id SERIAL PRIMARY KEY,
-        queue_id INTEGER,
-        campaign_id INTEGER,
-        recipient_email TEXT,
-        opened_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
-        ip_address TEXT,
-        user_agent TEXT,
-        is_bot BOOLEAN DEFAULT FALSE
-      );
-
-      CREATE TABLE IF NOT EXISTS clicks (
-        id SERIAL PRIMARY KEY,
-        queue_id INTEGER,
-        campaign_id INTEGER,
-        recipient_email TEXT,
-        original_url TEXT,
-        clicked_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
-        ip_address TEXT,
-        user_agent TEXT
-      );
+      CREATE INDEX IF NOT EXISTS idx_queue_campaign_status ON queue (campaign_id, status);
     `);
     console.log('Database initialized successfully');
   } finally {
@@ -110,22 +92,28 @@ async function initDB() {
   }
 }
 
-initDB().catch(console.error);
+const initialization = initDB();
 
 const db = {
-  query: (text, params) => pool.query(text, params),
+  query: async (text, params) => {
+    await initialization;
+    return pool.query(text, params);
+  },
 
   async get(text, params) {
+    await initialization;
     const res = await pool.query(text, params);
     return res.rows[0] || null;
   },
 
   async all(text, params) {
+    await initialization;
     const res = await pool.query(text, params);
     return res.rows;
   },
 
   async run(text, params) {
+    await initialization;
     const res = await pool.query(text, params);
     return res;
   },
@@ -133,16 +121,19 @@ const db = {
   prepare(text) {
     return {
       get: async (...params) => {
+        await initialization;
         const flatParams = params.flat();
         const res = await pool.query(text, flatParams);
         return res.rows[0] || null;
       },
       all: async (...params) => {
+        await initialization;
         const flatParams = params.flat();
         const res = await pool.query(text, flatParams);
         return res.rows;
       },
       run: async (...params) => {
+        await initialization;
         const flatParams = params.flat();
         const res = await pool.query(text, flatParams);
         return res;

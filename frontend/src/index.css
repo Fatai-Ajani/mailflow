@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Playfair+Display:wght@600&display=swap');
+
+:root {
+  --ink: #17211b;
+  --muted: #718078;
+  --paper: #f6f7f2;
+  --surface: #fffdf8;
+  --line: #e1e5dd;
+  --accent: #35613d;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; }
+button { transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease; }
+button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(23, 33, 27, 0.10); }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+.app-shell { background: var(--paper); }
+.app-sidebar { box-shadow: 10px 0 30px rgba(23, 33, 27, 0.035); }
+.app-main { max-width: 1440px; width: 100%; margin: 0 auto; }
+.app-logo { font-family: 'Playfair Display', Georgia, serif; letter-spacing: -0.02em; }
+.app-nav-item:hover { background: #eef2eb !important; color: var(--ink) !important; }
+@media (max-width: 760px) {
+  .app-shell { display: block !important; }
+  .app-sidebar { width: 100% !important; min-height: auto !important; padding: 14px 0 8px !important; }
+  .app-nav { display: flex; overflow-x: auto; gap: 4px; padding: 0 10px; }
+  .app-nav-item { flex: 0 0 auto; padding: 9px 12px !important; border-radius: 7px; }
+  .app-status { display: none; }
+  .app-main { padding: 18px 14px !important; }
+}

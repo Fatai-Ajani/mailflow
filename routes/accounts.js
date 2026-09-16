@@ -2,21 +2,13 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { google } = require('googleapis');
+const requirePin = require('./middleware/auth');
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_REDIRECT_URI
 );
-
-router.get('/', async (req, res) => {
-  try {
-    const accounts = await db.all('SELECT id, email, display_name, status, daily_sent, last_reset, created_at FROM accounts ORDER BY created_at DESC');
-    res.json(accounts);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 router.get('/auth', (req, res) => {
   const url = oauth2Client.generateAuthUrl({
@@ -88,11 +80,43 @@ router.get('/callback', async (req, res) => {
   }
 });
 
+router.use(requirePin);
+
+router.get('/', async (req, res) => {
+  try {
+    const accounts = await db.all('SELECT id, email, display_name, status, daily_sent, last_reset, created_at FROM accounts ORDER BY created_at DESC');
+    res.json(accounts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.put('/:id/display-name', async (req, res) => {
   try {
     const { display_name } = req.body;
     await db.run('UPDATE accounts SET display_name = $1 WHERE id = $2', [display_name, req.params.id]);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/display-name/batch', async (req, res) => {
+  try {
+    const { account_ids, display_name } = req.body;
+    if (!Array.isArray(account_ids) || account_ids.length === 0) {
+      return res.status(400).json({ error: 'Select at least one account' });
+    }
+    if (typeof display_name !== 'string' || !display_name.trim()) {
+      return res.status(400).json({ error: 'Display name is required' });
+    }
+
+    const ids = account_ids.map(Number).filter(Number.isInteger);
+    const result = await db.run(
+      'UPDATE accounts SET display_name = $1 WHERE id = ANY($2::int[])',
+      [display_name.trim(), ids]
+    );
+    res.json({ success: true, updated: result.rowCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

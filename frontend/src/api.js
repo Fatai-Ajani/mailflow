@@ -1,8 +1,19 @@
 import axios from 'axios';
 
+let appPin = null;
+
 const API = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'https://mailflow-ndex.onrender.com'
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000'
 });
+
+API.interceptors.request.use((config) => {
+  if (appPin) config.headers['x-app-pin'] = appPin;
+  return config;
+});
+
+export const setAppPin = (pin) => {
+  appPin = pin || null;
+};
 
 // PIN verification
 export const verifyPin = (pin) => API.post('/api/verify-pin', { pin });
@@ -15,6 +26,9 @@ export const resetAccount = (id) => API.post(`/api/accounts/${id}/reset`);
 export const pauseAccount = (id) => API.post(`/api/accounts/${id}/pause`);
 export const resumeAccount = (id) => API.post(`/api/accounts/${id}/resume`);
 export const updateDisplayName = (id, display_name) => API.put(`/api/accounts/${id}/display-name`, { display_name });
+export const batchUpdateDisplayName = (account_ids, display_name) => API.post('/api/accounts/display-name/batch', { account_ids, display_name });
+export const exportAccounts = () => API.get('/api/accounts/export');
+export const importAccounts = (accounts) => API.post('/api/accounts/import', { accounts });
 
 // Campaigns
 export const getCampaigns = () => API.get('/api/campaigns');
@@ -41,22 +55,9 @@ export const deleteContactList = (name) => API.delete(`/api/contacts/lists/${nam
 // Queue & Stats
 export const getQueue = () => API.get('/api/queue');
 export const getStats = () => API.get('/api/queue/stats');
-export const getLogs = () => API.get('/api/queue/logs');
 
 // Analytics
 export const getAnalytics = () => API.get('/api/analytics');
-export const getAnalyticsOverview = () => API.get('/api/analytics/overview/stats');
-export const getCampaignOpens = (id) => API.get(`/api/analytics/${id}/opens`);
-export const getCampaignUnopened = (id) => API.get(`/api/analytics/${id}/unopened`);
 
-// Followups
-export const getCampaignFollowups = (campaignId) => API.get(`/api/followups/campaign/${campaignId}`);
-export const createFollowup = (data) => API.post('/api/followups', data);
-export const updateFollowup = (id, data) => API.put(`/api/followups/${id}`, data);
-export const deleteFollowup = (id) => API.delete(`/api/followups/${id}`);
-export const pauseFollowup = (id) => API.post(`/api/followups/${id}/pause`);
-export const resumeFollowup = (id) => API.post(`/api/followups/${id}/resume`);
-export const getFollowupStatus = (id) => API.get(`/api/followups/${id}/status`);
-export const getExclusions = (campaignId) => API.get(`/api/followups/exclusions/${campaignId}`);
-export const addExclusions = (data) => API.post('/api/followups/exclusions', data);
-export const removeExclusion = (id) => API.delete(`/api/followups/exclusions/${id}`);
+// Dashboard
+export const getDashboard = () => API.get('/api/dashboard');

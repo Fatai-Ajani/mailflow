@@ -245,6 +245,9 @@ export default function Campaigns() {
 
   const handleCreateAndLaunch = async () => {
     if (!validate()) return;
+    const list = lists.find(item => item.list_name === form.contact_list);
+    const accountHint = 'active Gmail accounts will be used';
+    if (!window.confirm(`Launch this campaign to ${list?.count || 0} recipients at a ${speed}s delay?\n\n${accountHint}. You can pause it after launch.`)) return;
     try {
       const res = await createCampaign(buildPayload());
       await launchCampaign(res.data.id);
@@ -255,6 +258,8 @@ export default function Campaigns() {
   };
 
   const handleLaunch = async (id) => {
+    const campaign = campaigns.find(item => item.id === id);
+    if (!window.confirm(`Launch "${campaign?.name || 'this campaign'}" to ${campaign?.total_contacts || 0} recipients?\n\nThe scheduler will begin sending after launch.`)) return;
     try { await launchCampaign(id); showMsg('Campaign launched!'); load(); }
     catch (e) { showErr(e.response?.data?.error || 'Error launching'); }
   };

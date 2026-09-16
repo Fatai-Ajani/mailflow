@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getAccounts, getAuthUrl, deleteAccount, resetAccount, pauseAccount, resumeAccount, updateDisplayName } from '../api';
-import axios from 'axios';
-
-const BASE_URL = process.env.REACT_APP_API_URL || 'https://mailflow-ndex.onrender.com';
+import { getAccounts, getAuthUrl, deleteAccount, resetAccount, pauseAccount, resumeAccount, updateDisplayName, batchUpdateDisplayName, exportAccounts, importAccounts } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -50,6 +47,9 @@ export default function Accounts() {
   const [showImport, setShowImport] = useState(false);
   const [importData, setImportData] = useState('');
   const [importing, setImporting] = useState(false);
+  const [selectedAccounts, setSelectedAccounts] = useState([]);
+  const [batchName, setBatchName] = useState('');
+  const [savingBatch, setSavingBatch] = useState(false);
   const fileInputRef = useRef(null);
 
   const load = async () => {
@@ -104,10 +104,24 @@ export default function Accounts() {
     } catch (e) { showErr('Error saving name'); }
   };
 
+  const handleBatchName = async () => {
+    if (selectedAccounts.length === 0) return showErr('Select at least one account');
+    if (!batchName.trim()) return showErr('Enter a sending name');
+    try {
+      setSavingBatch(true);
+      const res = await batchUpdateDisplayName(selectedAccounts, batchName);
+      showMsg(`Saved sending name on ${res.data.updated} account(s).`);
+      setSelectedAccounts([]);
+      setBatchName('');
+      load();
+    } catch (e) { showErr(e.response?.data?.error || 'Error saving sending names'); }
+    finally { setSavingBatch(false); }
+  };
+
   // Export all accounts to JSON file
   const handleExport = async () => {
     try {
-      const res = await axios.get(`${BASE_URL}/api/accounts/export`);
+      const res = await exportAccounts();
       const data = JSON.stringify(res.data, null, 2);
       const blob = new Blob([data], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -127,7 +141,7 @@ export default function Accounts() {
     try {
       setImporting(true);
       const parsed = JSON.parse(importData);
-      const res = await axios.post(`${BASE_URL}/api/accounts/import`, { accounts: parsed });
+      const res = await importAccounts(parsed);
       showMsg(`Successfully imported ${res.data.imported} accounts!`);
       setShowImport(false);
       setImportData('');
@@ -229,6 +243,22 @@ export default function Accounts() {
         </div>
       </div>
 
+      <div style={s.card}>
+        <div style={s.cardTitle}>Batch sending name</div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            style={{ ...s.nameInput, width: '240px', padding: '8px 10px' }}
+            placeholder="e.g. Fatai from MailFlow"
+            value={batchName}
+            onChange={e => setBatchName(e.target.value)}
+          />
+          <button style={s.btnPrimary} onClick={handleBatchName} disabled={savingBatch || selectedAccounts.length === 0}>
+            {savingBatch ? 'Saving...' : `Save for ${selectedAccounts.length || 'selected'} account(s)`}
+          </button>
+        </div>
+        <div style={{ fontSize: '11px', color: '#888', marginTop: '8px' }}>Select accounts below, then apply one consistent From name in a single save.</div>
+      </div>
+
       <div style={s.infoBox}>
         Click <strong>Export backup</strong> regularly to save your accounts. If you ever lose your database, click <strong>Import backup</strong> and upload the file to restore everything instantly.
       </div>
@@ -242,6 +272,12 @@ export default function Accounts() {
         )}
         {accounts.map(acct => (
           <div key={acct.id} style={s.acctRow}>
+            <input
+              type="checkbox"
+              checked={selectedAccounts.includes(acct.id)}
+              onChange={e => setSelectedAccounts(current => e.target.checked ? [...current, acct.id] : current.filter(id => id !== acct.id))}
+              aria-label={`Select ${acct.email}`}
+            />
             <div style={{
               ...s.avatar,
               background: acct.status === 'paused' ? '#faeeda' : '#e6f1fb',
