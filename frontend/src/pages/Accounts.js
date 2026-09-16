@@ -170,6 +170,11 @@ export default function Accounts() {
   const activeCount = accounts.filter(a => a.status === 'active').length;
   const pausedCount = accounts.filter(a => a.status === 'paused').length;
   const totalSentToday = accounts.reduce((sum, a) => sum + (a.daily_sent || 0), 0);
+  const allAccountsSelected = accounts.length > 0 && selectedAccounts.length === accounts.length;
+
+  const toggleAllAccounts = () => {
+    setSelectedAccounts(allAccountsSelected ? [] : accounts.map(account => account.id));
+  };
 
   return (
     <div>
@@ -264,7 +269,22 @@ export default function Accounts() {
       </div>
 
       <div style={s.card}>
-        <div style={s.cardTitle}>Connected accounts ({accounts.length})</div>
+        <div style={{ ...s.cardTitle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+          <span>Connected accounts ({accounts.length})</span>
+          {accounts.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#718078', fontSize: '11px', fontWeight: '400', cursor: 'pointer' }}>
+                <input type="checkbox" checked={allAccountsSelected} onChange={toggleAllAccounts} />
+                {allAccountsSelected ? 'All selected' : 'Select all'}
+              </label>
+              {selectedAccounts.length > 0 && !allAccountsSelected && (
+                <button style={{ ...s.actionBtn, marginLeft: '0' }} onClick={() => setSelectedAccounts([])}>
+                  Clear ({selectedAccounts.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         {accounts.length === 0 && (
           <div style={s.emptyBox}>
             No accounts connected yet. Click "+ Connect account" to get started.
