@@ -95,7 +95,7 @@ In Cloudflare Pages, import the GitHub repository with:
 
 If the project has a **Deploy command** field, leave it empty. Cloudflare Pages runs the build command and publishes the output directory automatically.
 
-Cloudflare Pages will provide a permanent `*.pages.dev` URL. Every push to the selected GitHub branch can trigger a new deployment.
+Cloudflare Pages must be connected to the current owner repository `systemfataiajani-beep/mailflow`, not the older `Fatai-Ajani/mailflow` repository. Cloudflare Pages will provide a permanent `*.pages.dev` URL. Every push to the selected GitHub branch can trigger a new deployment.
 
 ## Source push
 
