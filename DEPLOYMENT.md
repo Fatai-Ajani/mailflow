@@ -84,12 +84,16 @@ The OAuth client produces a Client ID and Client Secret. Those values are stored
 
 ## Deploy the frontend
 
+Create a separate **Pages** project from the Cloudflare dashboard. Do not use `npx wrangler deploy` for this project; that command is only for the API Worker.
+
 In Cloudflare Pages, import the GitHub repository with:
 
 - Root directory: `frontend`
 - Build command: `npm run build`
 - Output directory: `build`
 - Environment variable: `REACT_APP_API_URL=https://mailflow-api.<your-subdomain>.workers.dev`
+
+If the project has a **Deploy command** field, leave it empty. Cloudflare Pages runs the build command and publishes the output directory automatically.
 
 Cloudflare Pages will provide a permanent `*.pages.dev` URL. Every push to the selected GitHub branch can trigger a new deployment.
 
