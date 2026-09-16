@@ -1,0 +1,1 @@
+ALTER TABLE campaigns ADD COLUMN last_sent_at TEXT;

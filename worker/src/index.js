@@ -41,6 +41,13 @@ function shuffle(values) {
   return result;
 }
 
+function isWithinWindow(startTime, endTime, date = new Date()) {
+  const current = date.getUTCHours() * 60 + date.getUTCMinutes();
+  const [startHour, startMinute] = String(startTime || '00:00').split(':').map(Number);
+  const [endHour, endMinute] = String(endTime || '23:59').split(':').map(Number);
+  return current >= (startHour * 60 + startMinute) && current <= (endHour * 60 + endMinute);
+}
+
 function requirePin(request, env) {
   const configured = env.APP_PIN;
   return Boolean(configured && request.headers.get('x-app-pin') === configured);
@@ -127,6 +134,7 @@ async function sendCampaignItem(env, item) {
   await env.DB.batch([
     env.DB.prepare("UPDATE queue SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?").bind(item.id),
     env.DB.prepare('UPDATE campaigns SET sent_count = sent_count + 1 WHERE id = ?').bind(item.campaign_id),
+    env.DB.prepare('UPDATE campaigns SET last_sent_at = ? WHERE id = ?').bind(new Date().toISOString(), item.campaign_id),
     env.DB.prepare('UPDATE accounts SET daily_sent = daily_sent + 1 WHERE id = ?').bind(item.account_id),
   ]);
 }
@@ -134,6 +142,9 @@ async function sendCampaignItem(env, item) {
 async function processCampaigns(env) {
   const campaigns = await rows(env.DB.prepare("SELECT * FROM campaigns WHERE status = 'running'"));
   for (const campaign of campaigns) {
+    const delaySeconds = Math.max(60, Number(campaign.delay_seconds) || 60);
+    if (campaign.last_sent_at && Date.now() - Date.parse(campaign.last_sent_at) < delaySeconds * 1000) continue;
+    if (campaign.schedule_type === 'window' && !isWithinWindow(campaign.start_time, campaign.end_time)) continue;
     const item = await one(env.DB.prepare(`
       SELECT q.*, c.content_variations, a.email AS account_email, a.display_name, a.access_token, a.refresh_token, a.token_expiry
       FROM queue q JOIN campaigns c ON c.id = q.campaign_id JOIN accounts a ON a.id = q.account_id
@@ -242,7 +253,9 @@ async function campaigns(request, env, parts, origin) {
     const hasContent = body.subject?.trim() || body.body_html?.trim() || body.body_plain?.trim() || variations.some(value => value && (value.subject?.trim() || value.body_html?.trim() || value.body_plain?.trim()));
     if (!body.name?.trim() || !body.contact_list?.trim() || !hasContent) return json({ error: 'Campaign name, contact list, and subject or body are required' }, 400, origin);
     const count = await one(env.DB.prepare('SELECT COUNT(*) AS count FROM contacts WHERE list_name = ?').bind(body.contact_list));
-    const result = await env.DB.prepare('INSERT INTO campaigns (name, subject, body_html, body_plain, contact_list, delay_seconds, start_time, end_time, schedule_type, content_variations, content_mode, total_contacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || variations[0]?.subject || '', body.body_html || variations[0]?.body_html || '', body.body_plain || variations[0]?.body_plain || '', body.contact_list.trim(), Math.max(60, Number(body.delay_seconds) || 60), body.start_time || '00:00', body.end_time || '23:59', body.schedule_type || 'immediate', JSON.stringify(variations), body.content_mode || 'random', Number(count?.count) || 0).first();
+    const delaySeconds = Number(body.delay_seconds);
+    if (!Number.isFinite(delaySeconds) || delaySeconds < 60) return json({ error: 'Custom delay must be at least 60 seconds on the current scheduler' }, 400, origin);
+    const result = await env.DB.prepare('INSERT INTO campaigns (name, subject, body_html, body_plain, contact_list, delay_seconds, start_time, end_time, schedule_type, content_variations, content_mode, total_contacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || variations[0]?.subject || '', body.body_html || variations[0]?.body_html || '', body.body_plain || variations[0]?.body_plain || '', body.contact_list.trim(), delaySeconds, body.start_time || '00:00', body.end_time || '23:59', body.schedule_type || 'immediate', JSON.stringify(variations), body.content_mode || 'random', Number(count?.count) || 0).first();
     return json({ id: result.id, success: true }, 200, origin);
   }
   const id = Number(parts[0]);
