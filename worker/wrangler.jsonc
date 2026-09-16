@@ -21,7 +21,7 @@
 		}
 	],
 	"vars": {
-		"APP_ORIGIN": "https://mailflow.pages.dev"
+		"APP_ORIGIN": "https://mailflow-frontend-6qk.pages.dev"
 	},
 	"env": {
 		"local": {
