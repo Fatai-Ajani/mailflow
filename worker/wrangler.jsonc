@@ -20,6 +20,23 @@
 			"remote": true
 		}
 	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "SEND_QUEUE",
+				"queue": "mailflow-send-queue"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "mailflow-send-queue",
+				"max_batch_size": 1,
+				"max_batch_timeout": 0,
+				"max_retries": 3,
+				"max_concurrency": 1
+			}
+		]
+	},
 	"vars": {
 		"APP_ORIGIN": "https://mailflow-frontend-6qk.pages.dev",
 		"BUSINESS_TIME_ZONE": "Africa/Lagos"

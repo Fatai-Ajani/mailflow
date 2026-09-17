@@ -256,15 +256,78 @@ async function processCampaignOnce(env, campaign) {
 }
 
 async function processCampaigns(env) {
-  const deadline = Date.now() + 55000;
-  while (Date.now() < deadline) {
+  const deadline = Date.now() + 18000;
+  let processed = 0;
+  const maxItems = 18;
+  while (Date.now() < deadline && processed < maxItems) {
     const campaigns = await rows(env.DB.prepare("SELECT * FROM campaigns WHERE status = 'running'"));
     if (!campaigns.length) return;
     for (const campaign of campaigns) {
       if (Date.now() >= deadline) return;
       await processCampaignOnce(env, campaign);
+      processed += 1;
     }
     await wait(250);
+  }
+}
+
+async function enqueuePendingMessages(env, campaignId) {
+  if (!env.SEND_QUEUE) return 0;
+  const campaign = await one(env.DB.prepare('SELECT id, delay_seconds FROM campaigns WHERE id = ?').bind(campaignId));
+  if (!campaign) return 0;
+  const pending = await rows(env.DB.prepare("SELECT id FROM queue WHERE campaign_id = ? AND status = 'pending' AND scheduled_at IS NULL ORDER BY id").bind(campaignId));
+  const delaySeconds = Math.max(1, Number(campaign.delay_seconds) || 1);
+  let scheduled = 0;
+  for (const chunk of chunkArray(pending, 100)) {
+    const messages = chunk.map((item, index) => ({
+      body: { queueId: item.id },
+      delaySeconds: Math.min(86400, (scheduled + index) * delaySeconds),
+    }));
+    await env.SEND_QUEUE.sendBatch(messages);
+    await env.DB.batch(chunk.map(item => env.DB.prepare("UPDATE queue SET scheduled_at = CURRENT_TIMESTAMP WHERE id = ? AND scheduled_at IS NULL").bind(item.id)));
+    scheduled += chunk.length;
+  }
+  return scheduled;
+}
+
+async function seedCampaignQueues(env) {
+  if (!env.SEND_QUEUE) return;
+  const campaigns = await rows(env.DB.prepare("SELECT id FROM campaigns WHERE status = 'running'"));
+  for (const campaign of campaigns) await enqueuePendingMessages(env, campaign.id);
+}
+
+async function processQueueMessage(message, env) {
+  const queueId = Number(message.body?.queueId);
+  if (!Number.isInteger(queueId)) return message.ack();
+  const item = await one(env.DB.prepare(`
+    SELECT q.*, c.content_variations, c.rotation_mode, c.delay_seconds, c.status AS campaign_status,
+      a.email AS account_email, a.display_name, a.access_token, a.refresh_token, a.token_expiry
+    FROM queue q
+    JOIN campaigns c ON c.id = q.campaign_id
+    JOIN accounts a ON a.id = q.account_id
+    WHERE q.id = ?
+  `).bind(queueId));
+  if (!item || item.status !== 'pending') return message.ack();
+  if (item.campaign_status !== 'running') return message.retry({ delaySeconds: 10 });
+  try {
+    await sendCampaignItem(env, item);
+    message.ack();
+    const pending = await one(env.DB.prepare("SELECT COUNT(*) AS count FROM queue WHERE campaign_id = ? AND status = 'pending'").bind(item.campaign_id));
+    if (!Number(pending?.count)) await env.DB.prepare("UPDATE campaigns SET status = 'completed' WHERE id = ? AND status = 'running'").bind(item.campaign_id).run();
+  } catch (error) {
+    const retries = Number(item.retry_count || 0) + 1;
+    if (retries < 3) {
+      const fallbackAccounts = await rows(env.DB.prepare("SELECT id FROM accounts WHERE status = 'active' AND id != ? ORDER BY RANDOM() LIMIT 1").bind(item.account_id));
+      const nextAccount = fallbackAccounts[0]?.id || item.account_id;
+      await env.DB.prepare("UPDATE queue SET retry_count = ?, last_error = ?, account_id = ? WHERE id = ?").bind(retries, String(error.message), nextAccount, item.id).run();
+      message.retry({ delaySeconds: Math.max(5, Math.min(60, Number(item.delay_seconds) || 5)) });
+    } else {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE queue SET status = 'failed', retry_count = ?, error = ? WHERE id = ?").bind(retries, String(error.message), item.id),
+        env.DB.prepare('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = ?').bind(item.campaign_id),
+      ]);
+      message.ack();
+    }
   }
 }
 
@@ -383,6 +446,7 @@ async function campaigns(request, env, parts, origin) {
     if (!accounts.length || !contacts.length) return json({ error: !accounts.length ? 'No active Gmail accounts connected' : 'No contacts found in this list' }, 400, origin);
     await env.DB.prepare("DELETE FROM queue WHERE campaign_id = ? AND status = 'pending'").bind(id).run();
     await env.DB.batch(contacts.map((contact, index) => env.DB.prepare('INSERT INTO queue (campaign_id, recipient_email, account_id) VALUES (?, ?, ?)').bind(id, contact.email, accounts[index % accounts.length].id)));
+    await enqueuePendingMessages(env, id);
     await env.DB.prepare("UPDATE campaigns SET status = 'running', sent_count = 0, failed_count = 0 WHERE id = ?").bind(id).run();
     return json({ success: true, queued: contacts.length }, 200, origin);
   }
@@ -493,7 +557,10 @@ export default {
     try { return await handle(request, env); } catch (error) { return json({ error: error.message || 'Internal server error' }, 500, originFor(request, env)); }
   },
   async scheduled(controller, env, ctx) {
-    const work = Promise.all([ensureDailyReset(env), processCampaigns(env)]);
+    const work = Promise.all([ensureDailyReset(env), seedCampaignQueues(env)]);
     ctx.waitUntil(work);
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) await processQueueMessage(message, env);
   },
 };
