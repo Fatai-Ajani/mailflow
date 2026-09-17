@@ -49,7 +49,7 @@ export default function PinModal({ onSuccess, onCancel, actionLabel }) {
         onSuccess(enteredPin);
       }
     } catch (e) {
-      setError('Wrong PIN. Try again.');
+      setError(e.response ? 'Wrong PIN. Try again.' : 'Server unreachable. Check your connection and try again.');
       setPin(['', '', '', '']);
       inputs.current[0]?.focus();
     }
