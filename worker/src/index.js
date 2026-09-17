@@ -46,6 +46,7 @@ function normalizeTemplate(value, index) {
   const get = (...keys) => keys.map(key => value?.[key]).find(item => item !== undefined && item !== null) || '';
   return {
     name: String(get('name', 'template_name', 'title') || `Imported template ${index + 1}`).trim(),
+    batch_name: String(get('batch_name', 'batch', 'group') || 'General').trim(),
     subject: String(get('subject', 'subject_line')).trim(),
     body_html: String(get('body_html', 'html', 'html_body')).trim(),
     body_plain: String(get('body_plain', 'plain_text', 'text', 'body_text')).trim(),
@@ -63,11 +64,27 @@ function shuffle(values) {
   return result;
 }
 
-function isWithinWindow(startTime, endTime, date = new Date()) {
-  const current = date.getUTCHours() * 60 + date.getUTCMinutes();
+function timeInZone(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timeZone || 'Africa/Lagos',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const hour = Number(parts.find(part => part.type === 'hour')?.value || 0);
+  const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+  return hour * 60 + minute;
+}
+
+function isWithinWindow(startTime, endTime, date = new Date(), timeZone = 'Africa/Lagos') {
+  const current = timeInZone(date, timeZone);
   const [startHour, startMinute] = String(startTime || '00:00').split(':').map(Number);
   const [endHour, endMinute] = String(endTime || '23:59').split(':').map(Number);
-  return current >= (startHour * 60 + startMinute) && current <= (endHour * 60 + endMinute);
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = endHour * 60 + endMinute;
+  if (startMinutes <= endMinutes) return current >= startMinutes && current <= endMinutes;
+  return current >= startMinutes || current <= endMinutes;
 }
 
 function localDate(value, timeZone) {
@@ -149,7 +166,10 @@ async function sendCampaignItem(env, item) {
     try {
       const variations = JSON.parse(item.content_variations || '[]');
       const usable = variations.filter(value => value && (value.subject || value.body_html || value.body_plain));
-      return usable.length ? usable[Math.floor(Math.random() * usable.length)] : item;
+      if (!usable.length) return item;
+      return item.rotation_mode === 'sequential'
+        ? usable[(Number(item.id) - 1) % usable.length]
+        : usable[Math.floor(Math.random() * usable.length)];
     } catch { return item; }
   })();
   const raw = makeEmail(item.recipient_email, item.display_name, item.account_email, content.subject, content.body_html, content.body_plain);
@@ -170,10 +190,10 @@ async function sendCampaignItem(env, item) {
 async function processCampaignOnce(env, campaign) {
   const delaySeconds = Math.max(1, Number(campaign.delay_seconds) || 1);
   if (campaign.last_sent_at && Date.now() - Date.parse(campaign.last_sent_at) < delaySeconds * 1000) return false;
-  if (campaign.schedule_type === 'window' && !isWithinWindow(campaign.start_time, campaign.end_time)) return false;
+  if (campaign.schedule_type === 'window' && !isWithinWindow(campaign.start_time, campaign.end_time, new Date(), env.BUSINESS_TIME_ZONE || 'Africa/Lagos')) return false;
 
   const item = await one(env.DB.prepare(`
-      SELECT q.*, c.content_variations, a.email AS account_email, a.display_name, a.access_token, a.refresh_token, a.token_expiry
+      SELECT q.*, c.content_variations, c.rotation_mode, a.email AS account_email, a.display_name, a.access_token, a.refresh_token, a.token_expiry
       FROM queue q JOIN campaigns c ON c.id = q.campaign_id JOIN accounts a ON a.id = q.account_id
       WHERE q.campaign_id = ? AND q.status = 'pending' AND a.status = 'active'
       ORDER BY q.id LIMIT 1
@@ -302,12 +322,19 @@ async function campaigns(request, env, parts, origin) {
   if (request.method === 'POST' && parts.length === 0) {
     const body = await bodyJson(request); let variations = [];
     try { variations = JSON.parse(body.content_variations || '[]'); } catch {}
-    const hasContent = body.subject?.trim() || body.body_html?.trim() || body.body_plain?.trim() || variations.some(value => value && (value.subject?.trim() || value.body_html?.trim() || value.body_plain?.trim()));
-    if (!body.name?.trim() || !body.contact_list?.trim() || !hasContent) return json({ error: 'Campaign name, contact list, and subject or body are required' }, 400, origin);
+    if (!body.name?.trim() || !body.contact_list?.trim()) return json({ error: 'Campaign name and contact list are required' }, 400, origin);
     const count = await one(env.DB.prepare('SELECT COUNT(*) AS count FROM contacts WHERE list_name = ?').bind(body.contact_list));
     const delaySeconds = Number(body.delay_seconds);
     if (!Number.isFinite(delaySeconds) || delaySeconds < 1) return json({ error: 'Custom delay must be at least 1 second' }, 400, origin);
-    const result = await env.DB.prepare('INSERT INTO campaigns (name, subject, body_html, body_plain, contact_list, delay_seconds, start_time, end_time, schedule_type, content_variations, content_mode, total_contacts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || variations[0]?.subject || '', body.body_html || variations[0]?.body_html || '', body.body_plain || variations[0]?.body_plain || '', body.contact_list.trim(), delaySeconds, body.start_time || '00:00', body.end_time || '23:59', body.schedule_type || 'immediate', JSON.stringify(variations), body.content_mode || 'random', Number(count?.count) || 0).first();
+    const selectedBatches = Array.isArray(body.template_batches) ? body.template_batches.filter(Boolean) : [];
+    if (selectedBatches.length) {
+      const placeholders = selectedBatches.map(() => '?').join(',');
+      const batchTemplates = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE batch_name IN (${placeholders}) ORDER BY id`).bind(...selectedBatches));
+      if (batchTemplates.length) variations = batchTemplates;
+    }
+    const hasContent = body.subject?.trim() || body.body_html?.trim() || body.body_plain?.trim() || variations.some(value => value && (value.subject?.trim() || value.body_html?.trim() || value.body_plain?.trim()));
+    if (!hasContent) return json({ error: 'Select a template batch or add a subject/body' }, 400, origin);
+    const result = await env.DB.prepare('INSERT INTO campaigns (name, subject, body_html, body_plain, contact_list, delay_seconds, start_time, end_time, schedule_type, content_variations, content_mode, total_contacts, rotation_mode, template_batches) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || variations[0]?.subject || '', body.body_html || variations[0]?.body_html || '', body.body_plain || variations[0]?.body_plain || '', body.contact_list.trim(), delaySeconds, body.start_time || '00:00', body.end_time || '23:59', body.schedule_type || 'immediate', JSON.stringify(variations), body.content_mode || 'random', Number(count?.count) || 0, body.rotation_mode === 'sequential' ? 'sequential' : 'random', JSON.stringify(body.template_batches || [])).first();
     return json({ id: result.id, success: true }, 200, origin);
   }
   const id = Number(parts[0]);
@@ -359,15 +386,15 @@ async function templates(request, env, parts, origin) {
         rejected.push({ row: index + 1, name: template.name, reason: status });
         continue;
       }
-      const result = await env.DB.prepare('INSERT INTO templates (name, subject, body_html, body_plain) VALUES (?, ?, ?, ?) RETURNING id').bind(template.name, template.subject, template.body_html, template.body_plain).first();
+      const result = await env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(template.name, template.batch_name || 'General', template.subject, template.body_html, template.body_plain).first();
       imported.push({ ...template, id: result.id, status });
     }
     return json({ success: true, imported, rejected, count: imported.length }, 200, origin);
   }
-  if (request.method === 'POST' && !parts.length) { const body = await bodyJson(request); if (!body.name?.trim()) return json({ error: 'Template name is required' }, 400, origin); const result = await env.DB.prepare('INSERT INTO templates (name, subject, body_html, body_plain) VALUES (?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || '', body.body_html || '', body.body_plain || '').first(); return json({ id: result.id, success: true }, 200, origin); }
+  if (request.method === 'POST' && !parts.length) { const body = await bodyJson(request); if (!body.name?.trim()) return json({ error: 'Template name is required' }, 400, origin); const result = await env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.batch_name?.trim() || 'General', body.subject || '', body.body_html || '', body.body_plain || '').first(); return json({ id: result.id, success: true }, 200, origin); }
   const id = Number(parts[0]);
   if (request.method === 'GET') { const item = await one(env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(id)); return item ? json(item, 200, origin) : json({ error: 'Template not found' }, 404, origin); }
-  if (request.method === 'PUT') { const body = await bodyJson(request); await env.DB.prepare('UPDATE templates SET name = ?, subject = ?, body_html = ?, body_plain = ? WHERE id = ?').bind(body.name?.trim(), body.subject || '', body.body_html || '', body.body_plain || '', id).run(); return json({ success: true }, 200, origin); }
+  if (request.method === 'PUT') { const body = await bodyJson(request); await env.DB.prepare('UPDATE templates SET name = ?, batch_name = ?, subject = ?, body_html = ?, body_plain = ? WHERE id = ?').bind(body.name?.trim(), body.batch_name?.trim() || 'General', body.subject || '', body.body_html || '', body.body_plain || '', id).run(); return json({ success: true }, 200, origin); }
   if (request.method === 'DELETE') { await env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(id).run(); return json({ success: true }, 200, origin); }
   return json({ error: 'Not found' }, 404, origin);
 }

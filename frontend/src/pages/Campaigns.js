@@ -163,6 +163,8 @@ export default function Campaigns() {
   const [err, setErr] = useState(null);
   const [variations, setVariations] = useState([emptyVariation()]);
   const [speed, setSpeed] = useState(30);
+  const [rotationMode, setRotationMode] = useState('random');
+  const [selectedBatches, setSelectedBatches] = useState([]);
   const [scheduleType, setScheduleType] = useState('immediate');
   const [form, setForm] = useState({
     name: '', contact_list: '',
@@ -175,6 +177,7 @@ export default function Campaigns() {
       setCampaigns(c.data);
       setLists(l.data);
       setTemplates(t.data);
+      setSelectedBatches(current => current.length ? current : [...new Set(t.data.map(template => template.batch_name || 'General'))]);
     } catch (e) { console.error(e); }
   };
 
@@ -223,6 +226,8 @@ export default function Campaigns() {
       end_time: scheduleType === 'immediate' ? '23:59' : form.end_time,
       content_variations: JSON.stringify(compressedVariations),
       content_mode: 'random',
+      rotation_mode: rotationMode,
+      template_batches: selectedBatches,
     };
   };
 
@@ -231,6 +236,8 @@ export default function Campaigns() {
     setForm({ name: '', contact_list: '', start_time: '08:00', end_time: '22:00' });
     setVariations([emptyVariation()]);
     setSpeed(30);
+    setRotationMode('random');
+    setSelectedBatches([]);
     setScheduleType('immediate');
   };
 
@@ -381,6 +388,27 @@ export default function Campaigns() {
               </div>
             </div>
           )}
+
+            <div style={s.cardTitle}>Template rotation</div>
+            <div style={s.infoBox}>Select one or more template batches. MailFlow combines their templates and rotates randomly or sequentially. Gmail accounts are assigned evenly across recipients.</div>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              {[...new Set(templates.map(template => template.batch_name || 'General'))].map(batch => (
+                <label key={batch} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
+                  <input type="checkbox" checked={selectedBatches.includes(batch)} onChange={event => setSelectedBatches(current => event.target.checked ? [...current, batch] : current.filter(value => value !== batch))} />
+                  {batch}
+                </label>
+              ))}
+              {!templates.length && <span style={s.hintText}>Create templates and assign batches first.</span>}
+            </div>
+            <div style={{ ...s.row2, marginBottom: '12px' }}>
+              <div>
+                <div style={s.label}>Rotation mode</div>
+                <select style={s.select} value={rotationMode} onChange={event => setRotationMode(event.target.value)}>
+                  <option value="random">Random rotation</option>
+                  <option value="sequential">Sequential rotation</option>
+                </select>
+              </div>
+            </div>
 
           <div style={s.label}>Sending interval <span style={s.hintText}>(the scheduler processes continuously during each minute)</span></div>
           <div style={s.speedGrid}>

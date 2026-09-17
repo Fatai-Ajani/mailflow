@@ -72,6 +72,7 @@ function TemplateEditor({ template, onSave, onCancel, isEditing }) {
   const [subject, setSubject] = useState(template?.subject || '');
   const [bodyHtml, setBodyHtml] = useState(template?.body_html || '');
   const [bodyPlain, setBodyPlain] = useState(template?.body_plain || '');
+  const [batchName, setBatchName] = useState(template?.batch_name || 'General');
   const [err, setErr] = useState('');
   const previewRef = useRef(null);
 
@@ -84,7 +85,7 @@ function TemplateEditor({ template, onSave, onCancel, isEditing }) {
   const handleSave = () => {
     if (!name.trim()) return setErr('Template name is required');
     setErr('');
-    onSave({ name, subject, body_html: bodyHtml, body_plain: bodyPlain });
+    onSave({ name, batch_name: batchName, subject, body_html: bodyHtml, body_plain: bodyPlain });
   };
 
   return (
@@ -97,8 +98,15 @@ function TemplateEditor({ template, onSave, onCancel, isEditing }) {
 
       {err && <div style={s.error}>{err}</div>}
 
+      <div style={s.infoBox}>
+        <strong>How template batches work:</strong> assign each template to one batch, such as “Launch” or “Newsletter”. Campaigns can select multiple batches and rotate through their combined templates randomly or sequentially. A template needs a subject, HTML body, or plain-text body to be usable.
+      </div>
+
       <div style={s.label}>Template name <span style={{ color: '#A32D2D' }}>*</span></div>
       <input style={s.input} placeholder="e.g. Black Friday offer" value={name} onChange={e => setName(e.target.value)} />
+
+      <div style={s.label}>Template batch <span style={s.hint}>(one batch per template)</span></div>
+      <input style={s.input} placeholder="e.g. Product launch" value={batchName} onChange={e => setBatchName(e.target.value)} />
 
       <div style={s.label}>Subject line <span style={s.hint}>(optional)</span></div>
       <input style={s.input} placeholder="Leave empty if not needed" value={subject} onChange={e => setSubject(e.target.value)} />
@@ -300,7 +308,7 @@ export default function Templates() {
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
                 <div style={s.templateName}>{t.name}</div>
                 <div style={s.templateSub}>
-                  {templateStatus(t)}
+                  {t.batch_name || 'General'} · {templateStatus(t)}
                   {' · '}
                   {t.body_html ? 'Has HTML' : t.body_plain ? 'Plain text only' : 'No body'}
                   {' · '}
