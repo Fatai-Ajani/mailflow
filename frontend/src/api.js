@@ -3,7 +3,8 @@ import axios from 'axios';
 let appPin = null;
 
 const API = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'https://mailflow-api.smartpos-webhooks.workers.dev'
+  baseURL: process.env.REACT_APP_API_URL || 'https://mailflow-api.smartpos-webhooks.workers.dev',
+  timeout: 10000
 });
 
 API.interceptors.request.use((config) => {

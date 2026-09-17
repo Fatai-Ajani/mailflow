@@ -354,6 +354,20 @@ async function handle(request, env) {
   }
 
   if (parts[0] !== 'api') return json({ error: 'Not found' }, 404, origin);
+  if (request.method === 'GET' && parts[1] === 'dashboard') {
+    const cacheKey = new Request(url.toString(), { method: 'GET' });
+    const cached = await caches.default.match(cacheKey);
+    if (cached) return cached;
+    const response = await dashboard(env, origin);
+    if (response.ok) {
+      const headers = new Headers(response.headers);
+      headers.set('cache-control', 'public, max-age=3600');
+      const cacheable = new Response(await response.text(), { status: response.status, headers });
+      await caches.default.put(cacheKey, cacheable.clone());
+      return cacheable;
+    }
+    return response;
+  }
   const publicRoute = parts[1] === 'dashboard' || (parts[1] === 'accounts' && (parts[2] === 'auth' || parts[2] === 'callback'));
   if (!publicRoute) {
     const denied = requireAuth(request, env, origin);

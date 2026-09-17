@@ -28,46 +28,43 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const load = useCallback(async () => {
+    setRetrying(true);
     try {
       const res = await getDashboard();
       setData(res.data);
+      localStorage.setItem('mailflow-dashboard', JSON.stringify(res.data));
       setOffline(false);
+      setErrorMessage('');
       setLoading(false);
     } catch (err) {
       if (!navigator.onLine) {
         setOffline(true);
+        setErrorMessage('You appear to be offline.');
       } else {
-        // Retry once after 3 seconds
-        setRetrying(true);
-        setTimeout(async () => {
-          try {
-            const res = await getDashboard();
-            setData(res.data);
-            setOffline(false);
-          } catch (e) {
-            setOffline(true);
-          }
-          setRetrying(false);
-          setLoading(false);
-        }, 3000);
+        setOffline(false);
+        setErrorMessage(err.response?.data?.error || 'The MailFlow API is unavailable.');
+        setLoading(false);
       }
+    } finally {
+      setRetrying(false);
     }
   }, []);
 
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('mailflow-dashboard');
+      if (cached) {
+        setData(JSON.parse(cached));
+        setLoading(false);
+        return;
+      }
+    } catch {
+      localStorage.removeItem('mailflow-dashboard');
+    }
     load();
-    const interval = setInterval(load, 8000);
-
-    window.addEventListener('online', () => { setOffline(false); load(); });
-    window.addEventListener('offline', () => setOffline(true));
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('online', load);
-      window.removeEventListener('offline', () => setOffline(true));
-    };
   }, [load]);
 
   const { stats, campaigns } = data;
@@ -90,7 +87,13 @@ export default function Dashboard() {
 
       {offline && (
         <div style={s.offlineBanner}>
-          ⚠️ You appear to be offline or the server is unreachable. Data shown may be outdated.
+          ⚠️ {errorMessage || 'You appear to be offline.'} Data shown may be outdated.
+        </div>
+      )}
+
+      {!offline && errorMessage && (
+        <div style={s.offlineBanner}>
+          ⚠️ {errorMessage} Data shown may be outdated.
         </div>
       )}
 

@@ -1,6 +1,6 @@
 # MailFlow deployment
 
-## Free architecture
+## Architecture
 
 - Frontend: Cloudflare Pages
 - API and scheduler: Cloudflare Workers
@@ -8,7 +8,13 @@
 - Source: GitHub
 - Email: Google Gmail API
 
-This architecture avoids Render/Railway sleep behavior and does not require a VPS. The Worker uses a Cron Trigger every minute to process pending campaign messages. Cloudflare's free plan currently documents 100,000 Worker requests per day, five Cron Triggers per account, and D1 free databases up to 500 MB.
+This architecture avoids Render/Railway sleep behavior and does not require a VPS. The Worker uses a Cron Trigger every minute to process pending campaign messages.
+
+### Production billing requirement
+
+MailFlow is not suitable for the Workers Free plan once it has real sending activity. D1 stops all queries after its daily free row-read or row-write allowance is reached. Enable the Cloudflare Workers Paid plan for the account that owns `mailflow-api`; it has a $5/month minimum and includes substantially higher monthly D1 allowances, with overage billed by usage. The change normally takes effect within minutes and does not require a database migration.
+
+In the Cloudflare dashboard, open **Workers & Pages**, upgrade the account to **Workers Paid**, and confirm that `mailflow-api` is using the Standard usage model. For free-tier use, the dashboard endpoint is edge-cached for one hour and the frontend stores the last successful dashboard response locally. It does not poll D1 automatically; use Refresh when current numbers are needed.
 
 ## Local setup
 
