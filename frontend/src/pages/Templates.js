@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate } from '../api';
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, importTemplates } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -28,7 +28,44 @@ const s = {
   footerBtns: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' },
   emptyBox: { textAlign: 'center', padding: '40px', color: '#888', fontSize: '13px' },
   previewBox: { background: '#f5f5f0', borderRadius: '8px', padding: '14px', fontSize: '13px', lineHeight: '1.7', marginTop: '8px', maxHeight: '200px', overflow: 'auto' },
+  importBox: { background: '#f5f5f0', borderRadius: '8px', padding: '14px', marginBottom: '12px' },
+  countGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px', marginBottom: '16px' },
+  countBox: { background: '#f0f3ed', borderRadius: '8px', padding: '10px', textAlign: 'center' },
 };
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"' && text[index + 1] === '"' && quoted) { cell += '"'; index += 1; continue; }
+    if (character === '"') { quoted = !quoted; continue; }
+    if (character === ',' && !quoted) { row.push(cell); cell = ''; continue; }
+    if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && text[index + 1] === '\n') index += 1;
+      row.push(cell); rows.push(row); row = []; cell = ''; continue;
+    }
+    cell += character;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  if (rows.length < 2) return [];
+  const headers = rows.shift().map(header => header.trim().toLowerCase());
+  return rows.filter(row => row.some(value => value.trim())).map(row => headers.reduce((result, header, index) => ({ ...result, [header]: row[index] || '' }), {}));
+}
+
+function templateStatus(template) {
+  const subject = Boolean(template.subject?.trim());
+  const html = Boolean(template.body_html?.trim());
+  const plain = Boolean(template.body_plain?.trim());
+  if (!subject && !html && !plain) return 'Missing subject/body';
+  if (subject && html && plain) return 'Complete';
+  if (subject && !html && !plain) return 'Subject only';
+  if (!subject && html && plain) return 'HTML + plain';
+  if (html) return subject ? 'Subject + HTML' : 'HTML only';
+  return subject ? 'Subject + plain' : 'Plain only';
+}
 
 function TemplateEditor({ template, onSave, onCancel, isEditing }) {
   const [name, setName] = useState(template?.name || '');
@@ -114,6 +151,9 @@ export default function Templates() {
   const [expandedId, setExpandedId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [err, setErr] = useState(null);
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const load = async () => {
     try {
@@ -154,6 +194,44 @@ export default function Templates() {
     } catch (e) { showErr('Error deleting template'); }
   };
 
+  const handleImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setImporting(true);
+      const text = await file.text();
+      let imported;
+      if (file.name.toLowerCase().endsWith('.json')) {
+        const parsed = JSON.parse(text);
+        imported = Array.isArray(parsed) ? parsed : parsed.templates;
+      } else {
+        imported = parseCsv(text);
+      }
+      if (!Array.isArray(imported) || imported.length === 0) throw new Error('No templates found');
+      const response = await importTemplates(imported);
+      const rejected = response.data.rejected?.length || 0;
+      showMsg(`Imported ${response.data.count} template(s)${rejected ? ` · ${rejected} empty row(s) skipped` : ''}.`);
+      setShowImport(false);
+      load();
+    } catch (error) {
+      showErr(error.response?.data?.error || 'Import failed. Use JSON or CSV with name, subject, body_html, and body_plain columns.');
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
+  };
+
+  const counts = templates.reduce((result, template) => {
+    const status = templateStatus(template);
+    return {
+      total: result.total + 1,
+      complete: result.complete + (status === 'Complete' ? 1 : 0),
+      subjectOnly: result.subjectOnly + (status === 'Subject only' ? 1 : 0),
+      bodyOnly: result.bodyOnly + (['HTML only', 'Plain only'].includes(status) ? 1 : 0),
+      bothFormats: result.bothFormats + (Boolean(template.body_html?.trim()) && Boolean(template.body_plain?.trim()) ? 1 : 0),
+    };
+  }, { total: 0, complete: 0, subjectOnly: 0, bodyOnly: 0, bothFormats: 0 });
+
   return (
     <div>
       <div style={s.topbar}>
@@ -162,12 +240,29 @@ export default function Templates() {
           <div style={s.sub}>Create and manage reusable email templates</div>
         </div>
         {!showForm && !editingTemplate && (
-          <button style={s.btnPrimary} onClick={() => setShowForm(true)}>+ New template</button>
+          <div>
+            <button style={s.btnPrimary} onClick={() => setShowForm(true)}>+ New template</button>
+            <button style={s.btn} onClick={() => setShowImport(!showImport)}>Import templates</button>
+          </div>
         )}
       </div>
 
       {msg && <div style={s.success}>{msg}</div>}
       {err && <div style={s.error}>{err}</div>}
+
+      {showImport && (
+        <div style={s.importBox}>
+          <div style={s.cardTitle}>Import templates</div>
+          <div style={{ fontSize: '12px', color: '#718078', marginBottom: '10px' }}>
+            JSON preserves HTML and plain text best. CSV accepts name, subject, body_html, and body_plain, plus common aliases.
+          </div>
+          <input ref={fileInputRef} type="file" accept=".json,.csv,application/json,text/csv" onChange={handleImportFile} style={{ display: 'none' }} />
+          <button style={s.btnPrimary} onClick={() => fileInputRef.current?.click()} disabled={importing}>
+            {importing ? 'Importing...' : 'Choose JSON or CSV'}
+          </button>
+          <button style={s.btn} onClick={() => setShowImport(false)}>Cancel</button>
+        </div>
+      )}
 
       {showForm && (
         <TemplateEditor
@@ -187,6 +282,14 @@ export default function Templates() {
       )}
 
       <div style={s.card}>
+        <div style={s.cardTitle}>Template overview</div>
+        <div style={s.countGrid}>
+          <div style={s.countBox}><strong>{counts.total}</strong><div style={s.hint}>Total</div></div>
+          <div style={s.countBox}><strong>{counts.complete}</strong><div style={s.hint}>Complete</div></div>
+          <div style={s.countBox}><strong>{counts.subjectOnly}</strong><div style={s.hint}>Subject only</div></div>
+          <div style={s.countBox}><strong>{counts.bodyOnly}</strong><div style={s.hint}>Body only</div></div>
+          <div style={s.countBox}><strong>{counts.bothFormats}</strong><div style={s.hint}>HTML + plain</div></div>
+        </div>
         <div style={s.cardTitle}>Saved templates ({templates.length})</div>
         {templates.length === 0 && (
           <div style={s.emptyBox}>No templates yet. Create one above.</div>
@@ -197,7 +300,7 @@ export default function Templates() {
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
                 <div style={s.templateName}>{t.name}</div>
                 <div style={s.templateSub}>
-                  {t.subject ? `Subject: ${t.subject}` : 'No subject'}
+                  {templateStatus(t)}
                   {' · '}
                   {t.body_html ? 'Has HTML' : t.body_plain ? 'Plain text only' : 'No body'}
                   {' · '}

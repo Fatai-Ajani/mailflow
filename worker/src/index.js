@@ -30,6 +30,28 @@ function csvEmails(value) {
   return lines.slice(hasHeader ? 1 : 0).map(line => line.split(',')[0]).join('\n');
 }
 
+function templateStatus(template) {
+  const hasSubject = Boolean(String(template.subject || '').trim());
+  const hasHtml = Boolean(String(template.body_html || '').trim());
+  const hasPlain = Boolean(String(template.body_plain || '').trim());
+  if (!hasSubject && !hasHtml && !hasPlain) return 'Missing subject and body';
+  if (hasSubject && hasHtml && hasPlain) return 'Complete';
+  if (hasSubject && !hasHtml && !hasPlain) return 'Subject only';
+  if (!hasSubject && hasHtml && hasPlain) return 'HTML + plain';
+  if (hasHtml) return hasSubject ? 'Subject + HTML' : 'HTML only';
+  return hasSubject ? 'Subject + plain' : 'Plain only';
+}
+
+function normalizeTemplate(value, index) {
+  const get = (...keys) => keys.map(key => value?.[key]).find(item => item !== undefined && item !== null) || '';
+  return {
+    name: String(get('name', 'template_name', 'title') || `Imported template ${index + 1}`).trim(),
+    subject: String(get('subject', 'subject_line')).trim(),
+    body_html: String(get('body_html', 'html', 'html_body')).trim(),
+    body_plain: String(get('body_plain', 'plain_text', 'text', 'body_text')).trim(),
+  };
+}
+
 function shuffle(values) {
   const result = [...values];
   for (let index = result.length - 1; index > 0; index -= 1) {
@@ -325,6 +347,23 @@ async function contacts(request, env, parts, origin) {
 
 async function templates(request, env, parts, origin) {
   if (request.method === 'GET' && !parts.length) return json(await rows(env.DB.prepare('SELECT * FROM templates ORDER BY created_at DESC')), 200, origin);
+  if (request.method === 'POST' && parts[0] === 'import') {
+    const body = await bodyJson(request);
+    const input = Array.isArray(body.templates) ? body.templates : [];
+    const imported = [];
+    const rejected = [];
+    for (let index = 0; index < input.length; index += 1) {
+      const template = normalizeTemplate(input[index], index);
+      const status = templateStatus(template);
+      if (status === 'Missing subject and body') {
+        rejected.push({ row: index + 1, name: template.name, reason: status });
+        continue;
+      }
+      const result = await env.DB.prepare('INSERT INTO templates (name, subject, body_html, body_plain) VALUES (?, ?, ?, ?) RETURNING id').bind(template.name, template.subject, template.body_html, template.body_plain).first();
+      imported.push({ ...template, id: result.id, status });
+    }
+    return json({ success: true, imported, rejected, count: imported.length }, 200, origin);
+  }
   if (request.method === 'POST' && !parts.length) { const body = await bodyJson(request); if (!body.name?.trim()) return json({ error: 'Template name is required' }, 400, origin); const result = await env.DB.prepare('INSERT INTO templates (name, subject, body_html, body_plain) VALUES (?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.subject || '', body.body_html || '', body.body_plain || '').first(); return json({ id: result.id, success: true }, 200, origin); }
   const id = Number(parts[0]);
   if (request.method === 'GET') { const item = await one(env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(id)); return item ? json(item, 200, origin) : json({ error: 'Template not found' }, 404, origin); }
