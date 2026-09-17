@@ -209,9 +209,18 @@ export default function Templates() {
       setImporting(true);
       const text = await file.text();
       let imported;
-      if (file.name.toLowerCase().endsWith('.json')) {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.json')) {
         const parsed = JSON.parse(text);
         imported = Array.isArray(parsed) ? parsed : parsed.templates;
+      } else if (lowerName.endsWith('.txt') || lowerName.endsWith('.csv')) {
+        const trimmed = text.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          const parsed = JSON.parse(trimmed);
+          imported = Array.isArray(parsed) ? parsed : parsed.templates;
+        } else {
+          imported = parseCsv(text);
+        }
       } else {
         imported = parseCsv(text);
       }
@@ -261,12 +270,47 @@ export default function Templates() {
       {showImport && (
         <div style={s.importBox}>
           <div style={s.cardTitle}>Import templates</div>
-          <div style={{ fontSize: '12px', color: '#718078', marginBottom: '10px' }}>
-            JSON preserves HTML and plain text best. CSV accepts name, subject, body_html, and body_plain, plus common aliases.
+
+          <div style={{ fontSize: '12px', color: '#718078', lineHeight: '1.7', marginBottom: '12px' }}>
+            <strong>What is required:</strong> each template needs a name, and at least one usable content field: subject, HTML body, or plain text body. Empty rows are skipped.
+            <br />
+            <strong>Best format:</strong> JSON is best because it preserves HTML and plain text exactly. CSV/TXT also works for simple imports.
+            <br />
+            <strong>Multiple templates:</strong> import a list of template objects or a CSV with one row per template. Each template can belong to a batch such as “Launch”, “Promo”, or “Welcome”.
           </div>
-          <input ref={fileInputRef} type="file" accept=".json,.csv,application/json,text/csv" onChange={handleImportFile} style={{ display: 'none' }} />
+
+          <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', marginBottom: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
+            <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example JSON</div>
+            <div style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', background: '#fafaf8', padding: '10px', borderRadius: '6px' }}>
+{[
+  { name: 'Launch offer', batch_name: 'Launch', subject: 'Big launch is here', body_html: '<h2>Hi!</h2><p>Welcome...</p>', body_plain: 'Hi! Welcome...' },
+  { name: 'Reminder follow-up', batch_name: 'Follow-up', subject: 'Quick reminder', body_plain: 'Just checking in...' }
+]}
+            </div>
+          </div>
+
+          <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', marginBottom: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
+            <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example CSV columns</div>
+            <div style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', background: '#fafaf8', padding: '10px', borderRadius: '6px' }}>
+name,batch_name,subject,body_html,body_plain
+Welcome email,Welcome,Welcome aboard,"&lt;h2&gt;Hello&lt;/h2&gt;&lt;p&gt;Thanks for joining.&lt;/p&gt;",Thanks for joining.
+Promo note,Sales,Limited time offer,,This is a plain text promo note
+            </div>
+          </div>
+
+          <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', marginBottom: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
+            <div style={{ fontWeight: '600', marginBottom: '6px' }}>Formatting tips</div>
+            <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
+              <li>Use plain text in <strong>body_plain</strong> for email-safe fallback content.</li>
+              <li>Use HTML in <strong>body_html</strong> when you want styled layouts, buttons, or branding.</li>
+              <li>Keep subject lines short and relevant. They are often the first thing recipients see.</li>
+              <li>One template = one batch name. Campaigns can combine multiple batches and rotate between them.</li>
+            </ul>
+          </div>
+
+          <input ref={fileInputRef} type="file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" onChange={handleImportFile} style={{ display: 'none' }} />
           <button style={s.btnPrimary} onClick={() => fileInputRef.current?.click()} disabled={importing}>
-            {importing ? 'Importing...' : 'Choose JSON or CSV'}
+            {importing ? 'Importing...' : 'Choose JSON, CSV or TXT'}
           </button>
           <button style={s.btn} onClick={() => setShowImport(false)}>Cancel</button>
         </div>

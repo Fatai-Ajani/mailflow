@@ -20,8 +20,39 @@ function originFor(request, env) {
   return origin && origin === env.APP_ORIGIN ? origin : env.APP_ORIGIN || '*';
 }
 
+function chunkArray(items, size = 500) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
 function normalizeEmails(value) {
   return [...new Set(String(value || '').split(/[\s,;]+/).map(email => email.trim().toLowerCase()).filter(Boolean))];
+}
+
+function extractTextEmails(value) {
+  const text = String(value || '');
+  if (!text.trim()) return [];
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const hasHeader = lines.some(line => /(^|,|\t|\|)email($|,|\t|\|)/i.test(line));
+  const entries = hasHeader ? lines.slice(1) : lines;
+  const results = [];
+  for (const line of entries) {
+    if (line.includes('|')) {
+      results.push(...line.split('|').map(part => part.trim()).filter(Boolean));
+      continue;
+    }
+    if (line.includes('\t')) {
+      results.push(...line.split('\t').map(part => part.trim()).filter(Boolean));
+      continue;
+    }
+    if (line.includes(',')) {
+      results.push(...line.split(',').map(part => part.trim()).filter(Boolean));
+      continue;
+    }
+    results.push(line);
+  }
+  return [...new Set(results.flatMap(value => normalizeEmails(value)).filter(email => emailPattern.test(email)))];
 }
 
 function csvEmails(value) {
@@ -357,16 +388,28 @@ async function campaigns(request, env, parts, origin) {
 async function contacts(request, env, parts, origin) {
   if (request.method === 'GET' && parts[0] === 'lists') return json(await rows(env.DB.prepare('SELECT list_name, COUNT(*) AS count, MAX(created_at) AS created_at FROM contacts GROUP BY list_name ORDER BY MAX(created_at) DESC')), 200, origin);
   if (request.method === 'POST' && parts[0] === 'manual') {
-    const body = await bodyJson(request); const all = normalizeEmails(body.emails); const valid = all.filter(email => emailPattern.test(email));
+    const body = await bodyJson(request); const all = normalizeEmails(Array.isArray(body.emails) ? body.emails.join('\n') : body.emails); const valid = all.filter(email => emailPattern.test(email));
     if (!body.list_name?.trim() || !valid.length) return json({ error: 'List name and valid emails are required' }, 400, origin);
-    let added = 0; for (const email of valid) { const result = await env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(body.list_name.trim(), email).run(); added += result.meta?.changes || 0; }
-    return json({ success: true, added, rejected: all.length - valid.length, duplicates: valid.length - added }, 200, origin);
+    let added = 0;
+    for (const batch of chunkArray(valid, 500)) {
+      const batchResults = await env.DB.batch(batch.map(email => env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(body.list_name.trim(), email)));
+      added += batchResults.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
+    }
+    return json({ success: true, added, rejected: all.length - valid.length, duplicates: valid.length - added, total: valid.length }, 200, origin);
   }
   if (request.method === 'POST' && parts[0] === 'upload') {
-    const form = await request.formData(); const listName = form.get('list_name'); const file = form.get('file'); const raw = file ? await file.text() : '';
-    const all = normalizeEmails(csvEmails(raw)); const valid = all.filter(email => emailPattern.test(email));
-    let added = 0; for (const email of valid) { const result = await env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(String(listName || '').trim(), email).run(); added += result.meta?.changes || 0; }
-    return json({ success: true, added, rejected: all.length - valid.length, duplicates: valid.length - added }, 200, origin);
+    const form = await request.formData(); const listName = String(form.get('list_name') || '').trim(); const file = form.get('file'); const raw = file ? await file.text() : '';
+    if (!listName) return json({ error: 'List name is required' }, 400, origin);
+    const csvCandidate = csvEmails(raw);
+    const all = (csvCandidate && csvCandidate.includes('@')) ? normalizeEmails(csvCandidate) : extractTextEmails(raw);
+    const valid = [...new Set(all.filter(email => emailPattern.test(email)))];
+    if (!valid.length) return json({ error: 'No valid emails were found in the uploaded file' }, 400, origin);
+    let added = 0;
+    for (const batch of chunkArray(valid, 500)) {
+      const batchResults = await env.DB.batch(batch.map(email => env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(listName, email)));
+      added += batchResults.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
+    }
+    return json({ success: true, added, rejected: all.length - valid.length, duplicates: valid.length - added, total: valid.length }, 200, origin);
   }
   if (request.method === 'DELETE' && parts[0] === 'lists') { await env.DB.prepare('DELETE FROM contacts WHERE list_name = ?').bind(decodeURIComponent(parts[1])).run(); return json({ success: true }, 200, origin); }
   return json({ error: 'Not found' }, 404, origin);
@@ -386,10 +429,11 @@ async function templates(request, env, parts, origin) {
         rejected.push({ row: index + 1, name: template.name, reason: status });
         continue;
       }
+      const currentChunk = imported.length;
       const result = await env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(template.name, template.batch_name || 'General', template.subject, template.body_html, template.body_plain).first();
-      imported.push({ ...template, id: result.id, status });
+      imported.push({ ...template, id: result.id, status, row: index + 1, chunkIndex: currentChunk });
     }
-    return json({ success: true, imported, rejected, count: imported.length }, 200, origin);
+    return json({ success: true, imported, rejected, count: imported.length, total: input.length }, 200, origin);
   }
   if (request.method === 'POST' && !parts.length) { const body = await bodyJson(request); if (!body.name?.trim()) return json({ error: 'Template name is required' }, 400, origin); const result = await env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.batch_name?.trim() || 'General', body.subject || '', body.body_html || '', body.body_plain || '').first(); return json({ id: result.id, success: true }, 200, origin); }
   const id = Number(parts[0]);

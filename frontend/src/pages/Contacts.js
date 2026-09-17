@@ -42,6 +42,8 @@ export default function Contacts() {
     } catch (e) { console.error(e); }
   };
 
+  const totalContacts = lists.reduce((sum, list) => sum + Number(list.count || 0), 0);
+
   useEffect(() => { load(); }, []);
 
   const showMsg = (m) => { setMsg(m); setTimeout(() => setMsg(null), 4000); };
@@ -99,11 +101,11 @@ export default function Contacts() {
           <input style={s.input} placeholder="e.g. Black Friday list" value={csvListName} onChange={e => setCsvListName(e.target.value)} />
           <div style={s.uploadZone} onClick={() => document.getElementById('csvfile').click()}>
             <div style={s.uploadTitle}>{file ? file.name : 'Drop your file here'}</div>
-            <div style={s.uploadSub}>CSV file · email column preferred, first column also accepted</div>
+            <div style={s.uploadSub}>CSV or TXT file · email column preferred, first column or plain email list also accepted</div>
             <button style={s.btn}>Browse file</button>
-            <input id="csvfile" type="file" accept=".csv" style={{ display: 'none' }} onChange={e => setFile(e.target.files[0])} />
+            <input id="csvfile" type="file" accept=".csv,.txt,text/csv,text/plain" style={{ display: 'none' }} onChange={e => setFile(e.target.files[0])} />
           </div>
-          <button style={s.btnPrimary} onClick={handleUpload}>Import CSV</button>
+          <button style={s.btnPrimary} onClick={handleUpload}>Import contacts</button>
         </div>
 
         <div style={s.card}>
@@ -117,12 +119,15 @@ export default function Contacts() {
       </div>
 
       <div style={s.listCard}>
-        <div style={s.cardTitle}>Saved contact lists ({lists.length})</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <div style={s.cardTitle}>Saved contact lists ({lists.length})</div>
+          <div style={{ fontSize: '12px', color: '#888' }}><strong>{totalContacts.toLocaleString()}</strong> total contacts</div>
+        </div>
         {lists.length === 0 && <div style={{ fontSize: '13px', color: '#888', padding: '20px 0' }}>No contact lists yet. Upload or paste emails above.</div>}
         {lists.map(list => (
           <div key={list.list_name} style={s.listRow}>
             <div style={s.listName}>{list.list_name}</div>
-            <div style={s.listCount}>{list.count} contacts</div>
+            <div style={s.listCount}>{Number(list.count || 0).toLocaleString()} contacts</div>
             <span style={s.pill}>Ready</span>
             <button style={s.delBtn} onClick={() => handleDelete(list.list_name)}>Delete</button>
           </div>
