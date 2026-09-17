@@ -31,6 +31,8 @@ const s = {
   importBox: { background: '#f5f5f0', borderRadius: '8px', padding: '14px', marginBottom: '12px' },
   countGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px', marginBottom: '16px' },
   countBox: { background: '#f0f3ed', borderRadius: '8px', padding: '10px', textAlign: 'center' },
+  guideGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px', marginBottom: '12px' },
+  codeBox: { background: '#fafaf8', border: '0.5px solid #e0e0d8', borderRadius: '6px', padding: '10px', fontFamily: 'monospace', fontSize: '11px', lineHeight: '1.6', whiteSpace: 'pre-wrap', overflowX: 'auto' },
 };
 
 function parseCsv(text) {
@@ -53,6 +55,61 @@ function parseCsv(text) {
   if (rows.length < 2) return [];
   const headers = rows.shift().map(header => header.trim().toLowerCase());
   return rows.filter(row => row.some(value => value.trim())).map(row => headers.reduce((result, header, index) => ({ ...result, [header]: row[index] || '' }), {}));
+}
+
+function stripHtml(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .trim();
+}
+
+function parseLabeledTemplates(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const templates = [];
+  let current = null;
+  let field = null;
+
+  const finish = () => {
+    if (!current) return;
+    const body = current.body.trim();
+    const hasHtml = /<\/?[a-z][\s\S]*>/i.test(body);
+    const subject = current.subject.trim();
+    templates.push({
+      name: subject || `Imported template ${templates.length + 1}`,
+      batch_name: 'General',
+      subject,
+      body_html: hasHtml ? body : '',
+      body_plain: hasHtml ? stripHtml(body) : body,
+    });
+    current = null;
+    field = null;
+  };
+
+  lines.forEach(line => {
+    const label = line.match(/^\s*(subject|body)\s*:\s*(.*)$/i);
+    if (label?.[1].toLowerCase() === 'subject') {
+      finish();
+      current = { subject: label[2], body: '' };
+      field = 'subject';
+      return;
+    }
+    if (label?.[1].toLowerCase() === 'body') {
+      if (!current) current = { subject: '', body: '' };
+      field = 'body';
+      current.body = label[2];
+      return;
+    }
+    if (current && field === 'subject') current.subject += `\n${line}`;
+    if (current && field === 'body') current.body += `\n${line}`;
+  });
+  finish();
+  return templates;
 }
 
 function templateStatus(template) {
@@ -90,7 +147,10 @@ function TemplateEditor({ template, onSave, onCancel, isEditing }) {
 
   return (
     <div style={s.card}>
-      <div style={s.cardTitle}>{isEditing ? 'Edit template' : 'New template'}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+        <div style={s.cardTitle}>{isEditing ? 'Edit template' : 'New template'}</div>
+        <button style={s.btn} onClick={onCancel}>Back to templates</button>
+      </div>
 
       <div style={s.infoBox}>
         Only the template name is required. Subject, HTML body and plain text are all optional.
@@ -159,8 +219,9 @@ export default function Templates() {
   const [expandedId, setExpandedId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [err, setErr] = useState(null);
-  const [showImport, setShowImport] = useState(false);
+  const [showImport, setShowImport] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
   const fileInputRef = useRef(null);
 
   const load = async () => {
@@ -202,6 +263,25 @@ export default function Templates() {
     } catch (e) { showErr('Error deleting template'); }
   };
 
+  const toggleSelected = (id) => {
+    setSelectedIds(current => current.includes(id) ? current.filter(selectedId => selectedId !== id) : [...current, id]);
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(selectedIds.length === templates.length ? [] : templates.map(template => template.id));
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!selectedIds.length) return showErr('Select at least one template first');
+    if (!window.confirm(`Delete ${selectedIds.length} selected template(s)? This cannot be undone.`)) return;
+    try {
+      await Promise.all(selectedIds.map(id => deleteTemplate(id)));
+      setSelectedIds([]);
+      showMsg('Selected templates deleted');
+      load();
+    } catch (e) { showErr('Error deleting selected templates'); }
+  };
+
   const handleImportFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -218,6 +298,8 @@ export default function Templates() {
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
           const parsed = JSON.parse(trimmed);
           imported = Array.isArray(parsed) ? parsed : parsed.templates;
+        } else if (lowerName.endsWith('.txt') && /^\s*(subject|body)\s*:/im.test(text)) {
+          imported = parseLabeledTemplates(text);
         } else {
           imported = parseCsv(text);
         }
@@ -259,7 +341,7 @@ export default function Templates() {
         {!showForm && !editingTemplate && (
           <div>
             <button style={s.btnPrimary} onClick={() => setShowForm(true)}>+ New template</button>
-            <button style={s.btn} onClick={() => setShowImport(!showImport)}>Import templates</button>
+            <button style={s.btn} onClick={() => setShowImport(!showImport)}>{showImport ? 'Hide import guide' : 'Show import guide'}</button>
           </div>
         )}
       </div>
@@ -279,32 +361,63 @@ export default function Templates() {
             <strong>Multiple templates:</strong> import a list of template objects or a CSV with one row per template. Each template can belong to a batch such as “Launch”, “Promo”, or “Welcome”.
           </div>
 
-          <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', marginBottom: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
-            <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example JSON</div>
-            <div style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', background: '#fafaf8', padding: '10px', borderRadius: '6px' }}>
-{[
-  { name: 'Launch offer', batch_name: 'Launch', subject: 'Big launch is here', body_html: '<h2>Hi!</h2><p>Welcome...</p>', body_plain: 'Hi! Welcome...' },
-  { name: 'Reminder follow-up', batch_name: 'Follow-up', subject: 'Quick reminder', body_plain: 'Just checking in...' }
-]}
+          <div style={s.guideGrid}>
+            <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
+              <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example JSON command</div>
+              <div style={s.codeBox}>{`[
+  {
+    "name": "Launch offer",
+    "batch_name": "Launch",
+    "subject": "Big launch is here",
+    "body_html": "<h2>Hi!</h2><p>Welcome...</p>",
+    "body_plain": "Hi! Welcome..."
+  },
+  {
+    "name": "Reminder follow-up",
+    "batch_name": "Follow-up",
+    "subject": "Quick reminder",
+    "body_plain": "Just checking in..."
+  }
+]`}</div>
+            </div>
+
+            <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
+              <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example CSV command</div>
+              <div style={s.codeBox}>{`name,batch_name,subject,body_html,body_plain
+Welcome email,Welcome,Welcome aboard,"<h2>Hello</h2><p>Thanks for joining.</p>",Thanks for joining.
+Promo note,Sales,Limited time offer,,This is a plain text promo note`}</div>
             </div>
           </div>
 
           <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', marginBottom: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
-            <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example CSV columns</div>
-            <div style={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', background: '#fafaf8', padding: '10px', borderRadius: '6px' }}>
-name,batch_name,subject,body_html,body_plain
-Welcome email,Welcome,Welcome aboard,"&lt;h2&gt;Hello&lt;/h2&gt;&lt;p&gt;Thanks for joining.&lt;/p&gt;",Thanks for joining.
-Promo note,Sales,Limited time offer,,This is a plain text promo note
+            <div style={{ fontWeight: '600', marginBottom: '6px' }}>Example TXT format</div>
+            <div style={s.codeBox}>{`subject: Welcome to our community
+body:
+Hello,
+
+Thanks for joining our community. We are glad to have you with us.
+
+subject: Discover what is new
+body:
+<h2>Welcome</h2>
+<p>Here are the latest updates from our team.</p>
+<p><strong>Learn more today.</strong></p>
+
+subject:
+body: This template has a body but no subject.`}</div>
+            <div style={{ marginTop: '8px', color: '#718078' }}>
+              Save the file with a <strong>.txt</strong> extension. Start each template with <strong>subject:</strong>, then put its content after <strong>body:</strong>. A new <strong>subject:</strong> starts the next template. Body lines can continue across multiple lines. HTML is detected automatically; plain text is preserved as plain text.
             </div>
           </div>
 
           <div style={{ background: '#fff', border: '0.5px solid #e0e0d8', borderRadius: '8px', padding: '12px', marginBottom: '12px', fontSize: '12px', color: '#333', lineHeight: '1.7' }}>
             <div style={{ fontWeight: '600', marginBottom: '6px' }}>Formatting tips</div>
             <ul style={{ margin: '0 0 0 18px', padding: 0 }}>
-              <li>Use plain text in <strong>body_plain</strong> for email-safe fallback content.</li>
-              <li>Use HTML in <strong>body_html</strong> when you want styled layouts, buttons, or branding.</li>
-              <li>Keep subject lines short and relevant. They are often the first thing recipients see.</li>
-              <li>One template = one batch name. Campaigns can combine multiple batches and rotate between them.</li>
+              <li>For JSON or CSV, use <strong>name</strong>, <strong>batch_name</strong>, <strong>subject</strong>, <strong>body_html</strong>, and <strong>body_plain</strong>.</li>
+              <li>Each row/object is one template. Every template needs a name plus a subject, HTML body, or plain-text body.</li>
+              <li>Keep HTML inside one quoted CSV cell. JSON is best when the body contains commas, quotes, or multiple paragraphs.</li>
+              <li>For TXT, repeat <strong>subject:</strong> and <strong>body:</strong> for each template. The subject may be empty, and the body may be plain text or HTML.</li>
+              <li>One template belongs to one batch. Campaigns can combine batches and rotate randomly or sequentially.</li>
             </ul>
           </div>
 
@@ -312,14 +425,14 @@ Promo note,Sales,Limited time offer,,This is a plain text promo note
           <button style={s.btnPrimary} onClick={() => fileInputRef.current?.click()} disabled={importing}>
             {importing ? 'Importing...' : 'Choose JSON, CSV or TXT'}
           </button>
-          <button style={s.btn} onClick={() => setShowImport(false)}>Cancel</button>
+          <button style={s.btn} onClick={() => setShowImport(false)}>Hide guide</button>
         </div>
       )}
 
       {showForm && (
         <TemplateEditor
           onSave={handleCreate}
-          onCancel={() => setShowForm(false)}
+          onCancel={() => { setShowForm(false); setShowImport(true); }}
           isEditing={false}
         />
       )}
@@ -328,7 +441,7 @@ Promo note,Sales,Limited time offer,,This is a plain text promo note
         <TemplateEditor
           template={editingTemplate}
           onSave={handleUpdate}
-          onCancel={() => setEditingTemplate(null)}
+          onCancel={() => { setEditingTemplate(null); setShowImport(true); }}
           isEditing={true}
         />
       )}
@@ -343,12 +456,28 @@ Promo note,Sales,Limited time offer,,This is a plain text promo note
           <div style={s.countBox}><strong>{counts.bothFormats}</strong><div style={s.hint}>HTML + plain</div></div>
         </div>
         <div style={s.cardTitle}>Saved templates ({templates.length})</div>
+        {templates.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <button style={s.btn} onClick={toggleAll}>
+              {selectedIds.length === templates.length ? 'Clear selection' : 'Select all'}
+            </button>
+            <button style={s.btnDanger} onClick={handleDeleteSelected} disabled={!selectedIds.length}>
+              Delete selected{selectedIds.length ? ` (${selectedIds.length})` : ''}
+            </button>
+          </div>
+        )}
         {templates.length === 0 && (
           <div style={s.emptyBox}>No templates yet. Create one above.</div>
         )}
         {templates.map(t => (
           <div key={t.id}>
             <div style={s.templateRow}>
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(t.id)}
+                onChange={() => toggleSelected(t.id)}
+                aria-label={`Select ${t.name}`}
+              />
               <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
                 <div style={s.templateName}>{t.name}</div>
                 <div style={s.templateSub}>

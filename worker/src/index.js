@@ -14,6 +14,7 @@ const text = (body, status = 200, origin = '*') => new Response(body, {
 });
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailExtractPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
 function originFor(request, env) {
   const origin = request.headers.get('origin');
@@ -27,7 +28,7 @@ function chunkArray(items, size = 500) {
 }
 
 function normalizeEmails(value) {
-  return [...new Set(String(value || '').split(/[\s,;]+/).map(email => email.trim().toLowerCase()).filter(Boolean))];
+  return [...new Set(String(value || '').match(emailExtractPattern)?.map(email => email.toLowerCase()) || [])];
 }
 
 function extractTextEmails(value) {
@@ -357,8 +358,13 @@ async function campaigns(request, env, parts, origin) {
     const count = await one(env.DB.prepare('SELECT COUNT(*) AS count FROM contacts WHERE list_name = ?').bind(body.contact_list));
     const delaySeconds = Number(body.delay_seconds);
     if (!Number.isFinite(delaySeconds) || delaySeconds < 1) return json({ error: 'Custom delay must be at least 1 second' }, 400, origin);
+    const selectedTemplateIds = Array.isArray(body.template_ids) ? body.template_ids.map(Number).filter(Number.isInteger) : [];
     const selectedBatches = Array.isArray(body.template_batches) ? body.template_batches.filter(Boolean) : [];
-    if (selectedBatches.length) {
+    if (selectedTemplateIds.length) {
+      const placeholders = selectedTemplateIds.map(() => '?').join(',');
+      const selectedTemplates = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE id IN (${placeholders}) ORDER BY id`).bind(...selectedTemplateIds));
+      if (selectedTemplates.length) variations = selectedTemplates;
+    } else if (selectedBatches.length) {
       const placeholders = selectedBatches.map(() => '?').join(',');
       const batchTemplates = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE batch_name IN (${placeholders}) ORDER BY id`).bind(...selectedBatches));
       if (batchTemplates.length) variations = batchTemplates;
@@ -388,20 +394,20 @@ async function campaigns(request, env, parts, origin) {
 async function contacts(request, env, parts, origin) {
   if (request.method === 'GET' && parts[0] === 'lists') return json(await rows(env.DB.prepare('SELECT list_name, COUNT(*) AS count, MAX(created_at) AS created_at FROM contacts GROUP BY list_name ORDER BY MAX(created_at) DESC')), 200, origin);
   if (request.method === 'POST' && parts[0] === 'manual') {
-    const body = await bodyJson(request); const all = normalizeEmails(Array.isArray(body.emails) ? body.emails.join('\n') : body.emails); const valid = all.filter(email => emailPattern.test(email));
+    const body = await bodyJson(request); const raw = Array.isArray(body.emails) ? body.emails.join('\n') : String(body.emails || ''); const all = normalizeEmails(raw); const valid = all.filter(email => emailPattern.test(email));
     if (!body.list_name?.trim() || !valid.length) return json({ error: 'List name and valid emails are required' }, 400, origin);
     let added = 0;
     for (const batch of chunkArray(valid, 500)) {
       const batchResults = await env.DB.batch(batch.map(email => env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(body.list_name.trim(), email)));
       added += batchResults.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
     }
-    return json({ success: true, added, rejected: all.length - valid.length, duplicates: valid.length - added, total: valid.length }, 200, origin);
+    const stored = await one(env.DB.prepare('SELECT COUNT(*) AS count FROM contacts WHERE list_name = ?').bind(body.list_name.trim()));
+    return json({ success: true, added, rejected: 0, duplicates: valid.length - added, total: valid.length, stored: Number(stored?.count || 0) }, 200, origin);
   }
   if (request.method === 'POST' && parts[0] === 'upload') {
     const form = await request.formData(); const listName = String(form.get('list_name') || '').trim(); const file = form.get('file'); const raw = file ? await file.text() : '';
     if (!listName) return json({ error: 'List name is required' }, 400, origin);
-    const csvCandidate = csvEmails(raw);
-    const all = (csvCandidate && csvCandidate.includes('@')) ? normalizeEmails(csvCandidate) : extractTextEmails(raw);
+    const all = normalizeEmails(raw);
     const valid = [...new Set(all.filter(email => emailPattern.test(email)))];
     if (!valid.length) return json({ error: 'No valid emails were found in the uploaded file' }, 400, origin);
     let added = 0;
@@ -409,7 +415,8 @@ async function contacts(request, env, parts, origin) {
       const batchResults = await env.DB.batch(batch.map(email => env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(listName, email)));
       added += batchResults.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
     }
-    return json({ success: true, added, rejected: all.length - valid.length, duplicates: valid.length - added, total: valid.length }, 200, origin);
+    const stored = await one(env.DB.prepare('SELECT COUNT(*) AS count FROM contacts WHERE list_name = ?').bind(listName));
+    return json({ success: true, added, rejected: 0, duplicates: valid.length - added, total: valid.length, stored: Number(stored?.count || 0) }, 200, origin);
   }
   if (request.method === 'DELETE' && parts[0] === 'lists') { await env.DB.prepare('DELETE FROM contacts WHERE list_name = ?').bind(decodeURIComponent(parts[1])).run(); return json({ success: true }, 200, origin); }
   return json({ error: 'Not found' }, 404, origin);

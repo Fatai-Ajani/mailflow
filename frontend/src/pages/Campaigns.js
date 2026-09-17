@@ -165,6 +165,7 @@ export default function Campaigns() {
   const [speed, setSpeed] = useState(30);
   const [rotationMode, setRotationMode] = useState('random');
   const [selectedBatches, setSelectedBatches] = useState([]);
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState([]);
   const [scheduleType, setScheduleType] = useState('immediate');
   const [form, setForm] = useState({
     name: '', contact_list: '',
@@ -178,6 +179,7 @@ export default function Campaigns() {
       setLists(l.data);
       setTemplates(t.data);
       setSelectedBatches(current => current.length ? current : [...new Set(t.data.map(template => template.batch_name || 'General'))]);
+      setSelectedTemplateIds(current => current.length ? current : t.data.map(template => template.id));
     } catch (e) { console.error(e); }
   };
 
@@ -228,6 +230,7 @@ export default function Campaigns() {
       content_mode: 'random',
       rotation_mode: rotationMode,
       template_batches: selectedBatches,
+      template_ids: selectedTemplateIds,
     };
   };
 
@@ -238,6 +241,7 @@ export default function Campaigns() {
     setSpeed(30);
     setRotationMode('random');
     setSelectedBatches([]);
+    setSelectedTemplateIds([]);
     setScheduleType('immediate');
   };
 
@@ -390,7 +394,30 @@ export default function Campaigns() {
           )}
 
             <div style={s.cardTitle}>Template rotation</div>
-            <div style={s.infoBox}>Select one or more template batches. MailFlow combines their templates and rotates randomly or sequentially. Gmail accounts are assigned evenly across recipients.</div>
+            <div style={s.infoBox}>Select all saved templates at once, or choose specific templates and batches. MailFlow rotates the selected templates randomly or sequentially. Gmail accounts are assigned evenly across recipients.</div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+              <button
+                type="button"
+                style={s.btn}
+                onClick={() => setSelectedTemplateIds(selectedTemplateIds.length === templates.length ? [] : templates.map(template => template.id))}
+                disabled={!templates.length}
+              >
+                {selectedTemplateIds.length === templates.length ? 'Clear all templates' : 'Select all templates'}
+              </button>
+              <span style={s.hintText}>{selectedTemplateIds.length} of {templates.length} templates selected</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px 14px', maxHeight: '180px', overflowY: 'auto', marginBottom: '12px' }}>
+              {templates.map(template => (
+                <label key={template.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedTemplateIds.includes(template.id)}
+                    onChange={event => setSelectedTemplateIds(current => event.target.checked ? [...current, template.id] : current.filter(id => id !== template.id))}
+                  />
+                  <span>{template.name}</span>
+                </label>
+              ))}
+            </div>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
               {[...new Set(templates.map(template => template.batch_name || 'General'))].map(batch => (
                 <label key={batch} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>

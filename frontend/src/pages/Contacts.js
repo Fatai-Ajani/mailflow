@@ -55,7 +55,7 @@ export default function Contacts() {
     if (emailArr.length === 0) return showErr('No valid emails found');
     try {
       const res = await addManualContacts({ list_name: listName, emails: emailArr });
-      showMsg(`Added ${res.data.added} emails to "${listName}"${res.data.duplicates ? ` · ${res.data.duplicates} duplicates skipped` : ''}${res.data.rejected ? ` · ${res.data.rejected} invalid entries skipped` : ''}`);
+      showMsg(`Found ${res.data.total} unique emails · added ${res.data.added} to "${listName}" · ${res.data.stored} stored in this list${res.data.duplicates ? ` · ${res.data.duplicates} already existed` : ''}`);
       setListName(''); setEmails('');
       load();
     } catch (e) { showErr('Error adding contacts'); }
@@ -68,7 +68,7 @@ export default function Contacts() {
       formData.append('file', file);
       formData.append('list_name', csvListName);
       const res = await uploadCSV(formData);
-      showMsg(`Imported ${res.data.added} emails to "${csvListName}"${res.data.duplicates ? ` · ${res.data.duplicates} duplicates skipped` : ''}${res.data.rejected ? ` · ${res.data.rejected} invalid entries skipped` : ''}`);
+      showMsg(`Found ${res.data.total} unique emails · added ${res.data.added} to "${csvListName}" · ${res.data.stored} stored in this list${res.data.duplicates ? ` · ${res.data.duplicates} already existed` : ''}`);
       setCsvListName(''); setFile(null);
       load();
     } catch (e) { showErr('Error uploading file'); }
