@@ -233,8 +233,10 @@ async function processCampaign(campaign) {
     console.log(`✓ Sent to ${queueItem.recipient_email}`);
 
   } catch (err) {
-    const providerError = err.response?.data?.error?.message || err.response?.data?.error || err.response?.data?.message;
-    const failureMessage = providerError ? `${err.message}: ${providerError}` : err.message;
+    const providerData = err.response?.data;
+    const providerError = providerData?.error?.message || providerData?.error || providerData?.message;
+    const providerDetail = providerData ? ` status=${err.response.status} data=${JSON.stringify(providerData).slice(0, 800)}` : '';
+    const failureMessage = `${err.message}${providerError && providerError !== err.message ? `: ${providerError}` : ''}${providerDetail}`;
     console.error(`✗ Failed: ${queueItem.recipient_email}: ${failureMessage}`);
     const retryCount = (queueItem.retry_count || 0) + 1;
 
