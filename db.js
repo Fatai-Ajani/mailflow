@@ -68,6 +68,8 @@ async function initDB(attempt = 1) {
         created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       );
 
+      ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template_batch TEXT;
+
       CREATE TABLE IF NOT EXISTS templates (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -76,6 +78,8 @@ async function initDB(attempt = 1) {
         body_plain TEXT,
         created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       );
+
+      ALTER TABLE templates ADD COLUMN IF NOT EXISTS batch_name TEXT DEFAULT 'General';
 
       CREATE TABLE IF NOT EXISTS queue (
         id SERIAL PRIMARY KEY,

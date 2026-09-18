@@ -178,8 +178,8 @@ export default function Campaigns() {
       setCampaigns(c.data);
       setLists(l.data);
       setTemplates(t.data);
-      setSelectedBatches(current => current.length ? current : [...new Set(t.data.map(template => template.batch_name || 'General'))]);
-      setSelectedTemplateIds(current => current.length ? current : t.data.map(template => template.id));
+      setSelectedBatches(current => current.length ? [current[0]] : []);
+      setSelectedTemplateIds(current => current.length ? current : []);
     } catch (e) { console.error(e); }
   };
 
@@ -203,6 +203,8 @@ export default function Campaigns() {
   const validate = () => {
     if (!form.name) return showErr('Please enter a campaign name') || false;
     if (!form.contact_list) return showErr('Please select a contact list') || false;
+    if (!selectedBatches.length) return showErr('Please select exactly one template batch') || false;
+    if (!selectedTemplateIds.length) return showErr('The selected template batch has no templates') || false;
     if (!Number.isFinite(speed) || speed < 1) return showErr('Custom delay must be at least 1 second') || false;
     return true;
   };
@@ -239,6 +241,7 @@ export default function Campaigns() {
       rotation_mode: rotationMode,
       template_batches: selectedBatches,
       template_ids: selectedTemplateIds,
+      template_batch: selectedBatches[0] || '',
     };
   };
 
@@ -423,20 +426,24 @@ export default function Campaigns() {
           )}
 
             <div style={s.cardTitle}>Template rotation</div>
-            <div style={s.infoBox}>Select all saved templates at once, or choose specific templates and batches. MailFlow rotates the selected templates randomly or sequentially. Gmail accounts are assigned evenly across recipients.</div>
+            <div style={s.infoBox}>Choose exactly one template batch for this campaign. You can pair any contact batch with any template batch. Templates rotate randomly, and each campaign uses only its selected batch.</div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
               <button
                 type="button"
                 style={s.btn}
-                onClick={() => setSelectedTemplateIds(selectedTemplateIds.length === templates.length ? [] : templates.map(template => template.id))}
-                disabled={!templates.length}
+                onClick={() => {
+                  const batch = selectedBatches[0];
+                  const batchTemplates = templates.filter(template => (template.batch_name || 'General') === batch);
+                  setSelectedTemplateIds(selectedTemplateIds.length === batchTemplates.length ? [] : batchTemplates.map(template => template.id));
+                }}
+                disabled={!selectedBatches.length}
               >
-                {selectedTemplateIds.length === templates.length ? 'Clear all templates' : 'Select all templates'}
+                {selectedTemplateIds.length === templates.filter(template => (template.batch_name || 'General') === selectedBatches[0]).length ? 'Clear batch templates' : 'Select batch templates'}
               </button>
-              <span style={s.hintText}>{selectedTemplateIds.length} of {templates.length} templates selected</span>
+              <span style={s.hintText}>{selectedTemplateIds.length} templates selected</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px 14px', maxHeight: '180px', overflowY: 'auto', marginBottom: '12px' }}>
-              {templates.map(template => (
+              {templates.filter(template => (template.batch_name || 'General') === selectedBatches[0]).map(template => (
                 <label key={template.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
                   <input
                     type="checkbox"
@@ -450,7 +457,7 @@ export default function Campaigns() {
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
               {[...new Set(templates.map(template => template.batch_name || 'General'))].map(batch => (
                 <label key={batch} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
-                  <input type="checkbox" checked={selectedBatches.includes(batch)} onChange={event => setSelectedBatches(current => event.target.checked ? [...current, batch] : current.filter(value => value !== batch))} />
+                  <input type="radio" name="campaign-template-batch" checked={selectedBatches[0] === batch} onChange={() => { setSelectedBatches([batch]); setSelectedTemplateIds(templates.filter(template => (template.batch_name || 'General') === batch).map(template => template.id)); }} />
                   {batch}
                 </label>
               ))}

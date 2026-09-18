@@ -26,7 +26,7 @@ router.post('/', async (req, res) => {
     const {
       name, subject, body_html, body_plain,
       contact_list, delay_seconds, start_time, end_time,
-      schedule_type, content_variations, content_mode, template_ids
+      schedule_type, content_variations, content_mode, template_ids, template_batch
     } = req.body;
 
     // Only campaign name and contact list are required
@@ -45,7 +45,7 @@ router.post('/', async (req, res) => {
       : [];
     if (selectedTemplateIds.length > 0) {
       const selectedTemplates = await db.all(
-        'SELECT id, name, subject, body_html, body_plain FROM templates WHERE id = ANY($1::int[]) ORDER BY id',
+        'SELECT id, name, batch_name, subject, body_html, body_plain FROM templates WHERE id = ANY($1::int[]) ORDER BY id',
         [selectedTemplateIds]
       );
       if (selectedTemplates.length !== selectedTemplateIds.length) {
@@ -58,6 +58,11 @@ router.post('/', async (req, res) => {
         return res.status(400).json({
           error: `${incomplete.length} selected template(s) need a subject or a message body before this campaign can be saved. Examples: ${examples}`
         });
+      }
+
+      const selectedBatches = [...new Set(selectedTemplates.map(template => template.batch_name || 'General'))];
+      if (selectedBatches.length !== 1 || (template_batch && selectedBatches[0] !== template_batch)) {
+        return res.status(400).json({ error: 'Select templates from exactly one template batch for this campaign.' });
       }
 
       parsedVariations = selectedTemplates.map(template => ({
@@ -91,9 +96,9 @@ router.post('/', async (req, res) => {
 
     const result = await db.run(`
       INSERT INTO campaigns 
-        (name, subject, body_html, body_plain, contact_list, delay_seconds, 
+        (name, subject, body_html, body_plain, contact_list, delay_seconds, template_batch,
          start_time, end_time, total_contacts, schedule_type, content_variations, content_mode)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id
     `, [
       name,
@@ -102,6 +107,7 @@ router.post('/', async (req, res) => {
       body_plain || (parsedVariations[0]?.body_plain || ''),
       contact_list,
       delay,
+      template_batch || null,
       start_time || '00:00',
       end_time || '23:59',
       contacts.count,

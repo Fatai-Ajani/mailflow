@@ -49,16 +49,24 @@ router.post('/manual', async (req, res) => {
     const validEmails = normalized.filter(email => EMAIL_PATTERN.test(email));
     if (validEmails.length === 0) return res.status(400).json({ error: 'No valid email addresses found' });
 
+    const listName = list_name.trim();
+    const conflicts = await db.all(
+      'SELECT email, list_name FROM contacts WHERE email = ANY($1::text[]) AND list_name <> $2',
+      [validEmails, listName]
+    );
+    const blocked = new Set(conflicts.map(contact => contact.email));
+    const allowedEmails = validEmails.filter(email => !blocked.has(email));
+
     let added = 0;
-    for (const email of validEmails) {
+    for (const email of allowedEmails) {
       const result = await db.run(
         'INSERT INTO contacts (list_name, email) VALUES ($1, $2) ON CONFLICT (list_name, email) DO NOTHING RETURNING id',
-        [list_name.trim(), email]
+        [listName, email]
       );
       if (result.rowCount > 0) added++;
     }
 
-    res.json({ success: true, added, rejected: normalized.length - validEmails.length, duplicates: validEmails.length - added });
+    res.json({ success: true, added, rejected: normalized.length - validEmails.length, duplicates: validEmails.length - added, cross_batch_duplicates: blocked.size, conflicts: conflicts.slice(0, 20) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -83,16 +91,23 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       .on('end', async () => {
         const normalized = normalizeEmails(emails.join('\n'));
         const validEmails = normalized.filter(email => EMAIL_PATTERN.test(email));
+        const listName = String(list_name || '').trim();
+        const conflicts = await db.all(
+          'SELECT email, list_name FROM contacts WHERE email = ANY($1::text[]) AND list_name <> $2',
+          [validEmails, listName]
+        );
+        const blocked = new Set(conflicts.map(contact => contact.email));
+        const allowedEmails = validEmails.filter(email => !blocked.has(email));
         let added = 0;
-        for (const email of validEmails) {
+        for (const email of allowedEmails) {
           const result = await db.run(
             'INSERT INTO contacts (list_name, email) VALUES ($1, $2) ON CONFLICT (list_name, email) DO NOTHING RETURNING id',
-            [list_name.trim(), email]
+            [listName, email]
           );
           if (result.rowCount > 0) added++;
         }
         fs.unlinkSync(filePath);
-        res.json({ success: true, added, rejected: normalized.length - validEmails.length, duplicates: validEmails.length - added });
+        res.json({ success: true, added, rejected: normalized.length - validEmails.length, duplicates: validEmails.length - added, cross_batch_duplicates: blocked.size, conflicts: conflicts.slice(0, 20) });
       })
       .on('error', (err) => {
         res.status(500).json({ error: err.message });
