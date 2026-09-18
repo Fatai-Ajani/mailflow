@@ -40,9 +40,22 @@ function plainTextToHtml(text) {
   return `<div style="font-family:sans-serif;font-size:14px;line-height:1.6;color:#333;">${escaped}</div>`;
 }
 
+function cleanHeaderValue(value) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim();
+}
+
+function encodeMimeHeader(value) {
+  const cleaned = cleanHeaderValue(value);
+  return /[^\x00-\x7F]/.test(cleaned)
+    ? `=?UTF-8?B?${Buffer.from(cleaned, 'utf8').toString('base64')}?=`
+    : cleaned;
+}
+
 function makeEmail(to, fromName, fromEmail, subject, bodyHtml, bodyPlain, replyToMessageId) {
   const boundary = 'mailflow_boundary';
-  const fromField = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+  const safeTo = cleanHeaderValue(to);
+  const safeFromEmail = cleanHeaderValue(fromEmail);
+  const fromField = fromName ? `${encodeMimeHeader(fromName)} <${safeFromEmail}>` : safeFromEmail;
 
   const hasHtml = bodyHtml && bodyHtml.trim();
   const hasPlain = bodyPlain && bodyPlain.trim();
@@ -64,9 +77,9 @@ function makeEmail(to, fromName, fromEmail, subject, bodyHtml, bodyPlain, replyT
   const finalSubject = subject && subject.trim() ? subject : '(no subject)';
 
   const headers = [
-    `To: ${to}`,
+    `To: ${safeTo}`,
     `From: ${fromField}`,
-    `Subject: ${finalSubject}`,
+    `Subject: ${encodeMimeHeader(finalSubject)}`,
     'MIME-Version: 1.0',
   ];
 
@@ -208,7 +221,9 @@ async function processCampaign(campaign) {
     console.log(`✓ Sent to ${queueItem.recipient_email}`);
 
   } catch (err) {
-    console.error(`✗ Failed: ${queueItem.recipient_email}: ${err.message}`);
+    const providerError = err.response?.data?.error?.message || err.response?.data?.error || err.response?.data?.message;
+    const failureMessage = providerError ? `${err.message}: ${providerError}` : err.message;
+    console.error(`✗ Failed: ${queueItem.recipient_email}: ${failureMessage}`);
     const retryCount = (queueItem.retry_count || 0) + 1;
 
     if (retryCount < MAX_RETRIES) {
@@ -216,12 +231,12 @@ async function processCampaign(campaign) {
       const newAccountId = newAccount ? newAccount.id : queueItem.acc_id;
       await db.run(
         "UPDATE queue SET retry_count = $1, last_error = $2, account_id = $3, status = 'pending' WHERE id = $4",
-        [retryCount, err.message, newAccountId, queueItem.id]
+        [retryCount, failureMessage, newAccountId, queueItem.id]
       );
     } else {
       await db.run(
         "UPDATE queue SET status = 'failed', error = $1, retry_count = $2 WHERE id = $3",
-        [err.message, retryCount, queueItem.id]
+        [failureMessage, retryCount, queueItem.id]
       );
       await db.run('UPDATE campaigns SET failed_count = failed_count + 1 WHERE id = $1', [campaign.id]);
     }
