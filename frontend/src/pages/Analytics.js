@@ -18,9 +18,11 @@ const s = {
 export default function Analytics() {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
   const load = async () => {
+    setRefreshing(true);
     try {
       const response = await getAnalytics();
       setCampaigns(response.data);
@@ -29,13 +31,12 @@ export default function Analytics() {
       setError('Delivery data is unavailable right now.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 15000);
-    return () => clearInterval(interval);
   }, []);
 
   const totals = campaigns.reduce((result, campaign) => ({
@@ -46,8 +47,18 @@ export default function Analytics() {
 
   return (
     <div>
-      <div style={s.title}>Delivery analytics</div>
-      <div style={s.sub}>Reliable sending outcomes only. MailFlow does not track opens or clicks.</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <div>
+          <div style={s.title}>Delivery analytics</div>
+          <div style={s.sub}>Reliable sending outcomes only. MailFlow does not track opens or clicks.</div>
+        </div>
+        <button
+          onClick={load}
+          style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #dfe2dc', background: '#fff', cursor: 'pointer', fontSize: '12px' }}
+        >
+          {refreshing ? 'Refreshing...' : '↻ Refresh'}
+        </button>
+      </div>
 
       {error && <div style={{ ...s.card, color: '#8b3f35' }}>{error}</div>}
       {loading ? <div style={s.empty}>Loading delivery data...</div> : (

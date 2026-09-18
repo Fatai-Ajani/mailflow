@@ -21,7 +21,7 @@ function originFor(request, env) {
   return origin && origin === env.APP_ORIGIN ? origin : env.APP_ORIGIN || '*';
 }
 
-const SAFE_D1_BATCH_SIZE = 100;
+const SAFE_D1_BATCH_SIZE = 20;
 
 function chunkArray(items, size = SAFE_D1_BATCH_SIZE) {
   const chunks = [];
@@ -467,7 +467,7 @@ async function campaigns(request, env, parts, origin) {
     const selectedBatches = Array.isArray(body.template_batches) ? body.template_batches.filter(Boolean) : [];
     if (selectedTemplateIds.length) {
       const selectedTemplates = [];
-      for (const batch of chunkArray(selectedTemplateIds, 200)) {
+      for (const batch of chunkArray(selectedTemplateIds, 50)) {
         const placeholders = batch.map(() => '?').join(',');
         const results = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE id IN (${placeholders}) ORDER BY id`).bind(...batch));
         selectedTemplates.push(...results);
@@ -475,7 +475,7 @@ async function campaigns(request, env, parts, origin) {
       if (selectedTemplates.length) variations = selectedTemplates;
     } else if (selectedBatches.length) {
       const batchTemplates = [];
-      for (const batch of chunkArray(selectedBatches, 200)) {
+      for (const batch of chunkArray(selectedBatches, 50)) {
         const placeholders = batch.map(() => '?').join(',');
         const results = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE batch_name IN (${placeholders}) ORDER BY id`).bind(...batch));
         batchTemplates.push(...results);
@@ -508,8 +508,12 @@ async function campaigns(request, env, parts, origin) {
       await runD1Batches(env.DB, batch.map(item => env.DB.prepare('INSERT INTO queue (campaign_id, recipient_email, account_id) VALUES (?, ?, ?)').bind(id, item.email, item.accountId)));
     }
 
-    await enqueuePendingMessages(env, id);
     await env.DB.prepare("UPDATE campaigns SET status = 'running', sent_count = 0, failed_count = 0 WHERE id = ?").bind(id).run();
+    try {
+      await enqueuePendingMessages(env, id);
+    } catch (error) {
+      console.error('enqueuePendingMessages failed for campaign', id, error);
+    }
     await invalidateDashboardCache(env, request);
     return json({ success: true, queued: contacts.length }, 200, origin);
   }
@@ -579,8 +583,8 @@ async function templates(request, env, parts, origin) {
     for (const batch of chunkArray(valid, SAFE_D1_BATCH_SIZE)) {
       const statements = batch.map(template => env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?)')
         .bind(template.name, template.batch_name || 'General', template.subject, template.body_html, template.body_plain));
-      const results = await env.DB.batch(statements);
-      const successful = batch.filter((template, index) => Number(results[index]?.meta?.changes || 0) > 0).map(template => ({ ...template, inserted: true }));
+      const chunkResults = await env.DB.batch(statements);
+      const successful = batch.filter((template, index) => Number(chunkResults[index]?.meta?.changes || 0) > 0).map(template => ({ ...template, inserted: true }));
       imported.push(...successful);
     }
 
