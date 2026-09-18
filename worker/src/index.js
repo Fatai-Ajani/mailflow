@@ -21,10 +21,18 @@ function originFor(request, env) {
   return origin && origin === env.APP_ORIGIN ? origin : env.APP_ORIGIN || '*';
 }
 
-function chunkArray(items, size = 500) {
+const SAFE_D1_BATCH_SIZE = 100;
+
+function chunkArray(items, size = SAFE_D1_BATCH_SIZE) {
   const chunks = [];
   for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
   return chunks;
+}
+
+async function runD1Batches(db, statements, batchSize = SAFE_D1_BATCH_SIZE) {
+  for (const batch of chunkArray(statements, batchSize)) {
+    await db.batch(batch);
+  }
 }
 
 function normalizeEmails(value) {
@@ -426,13 +434,14 @@ async function accounts(request, env, parts, origin) {
   if (request.method === 'POST' && parts[0] === 'display-name' && parts[1] === 'batch') {
     const body = await bodyJson(request); const ids = (body.account_ids || []).map(Number).filter(Number.isInteger);
     if (!ids.length || !String(body.display_name || '').trim()) return json({ error: 'Accounts and display name are required' }, 400, origin);
-    await env.DB.batch(ids.map(id => env.DB.prepare('UPDATE accounts SET display_name = ? WHERE id = ?').bind(body.display_name.trim(), id)));
+    await runD1Batches(env.DB, ids.map(id => env.DB.prepare('UPDATE accounts SET display_name = ? WHERE id = ?').bind(body.display_name.trim(), id)));
     return json({ success: true, updated: ids.length }, 200, origin);
   }
   if (parts[0] === 'export' && request.method === 'GET') return json(await rows(env.DB.prepare('SELECT * FROM accounts ORDER BY created_at DESC')), 200, origin);
   if (parts[0] === 'import' && request.method === 'POST') {
     const body = await bodyJson(request); const accounts = Array.isArray(body.accounts) ? body.accounts : [];
-    await env.DB.batch(accounts.filter(account => account.email).map(account => env.DB.prepare(`INSERT INTO accounts (email, display_name, access_token, refresh_token, token_expiry, status, daily_sent) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO UPDATE SET display_name = excluded.display_name, access_token = excluded.access_token, refresh_token = COALESCE(excluded.refresh_token, accounts.refresh_token), token_expiry = excluded.token_expiry, status = excluded.status, daily_sent = excluded.daily_sent`).bind(account.email, account.display_name || null, account.access_token || null, account.refresh_token || null, account.token_expiry || null, account.status || 'active', account.daily_sent || 0)));
+    const validAccounts = accounts.filter(account => account.email);
+    await runD1Batches(env.DB, validAccounts.map(account => env.DB.prepare(`INSERT INTO accounts (email, display_name, access_token, refresh_token, token_expiry, status, daily_sent) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO UPDATE SET display_name = excluded.display_name, access_token = excluded.access_token, refresh_token = COALESCE(excluded.refresh_token, accounts.refresh_token), token_expiry = excluded.token_expiry, status = excluded.status, daily_sent = excluded.daily_sent`).bind(account.email, account.display_name || null, account.access_token || null, account.refresh_token || null, account.token_expiry || null, account.status || 'active', account.daily_sent || 0)));
     return json({ success: true, imported: accounts.length }, 200, origin);
   }
   const id = Number(parts[0]);
@@ -457,12 +466,20 @@ async function campaigns(request, env, parts, origin) {
     const selectedTemplateIds = Array.isArray(body.template_ids) ? body.template_ids.map(Number).filter(Number.isInteger) : [];
     const selectedBatches = Array.isArray(body.template_batches) ? body.template_batches.filter(Boolean) : [];
     if (selectedTemplateIds.length) {
-      const placeholders = selectedTemplateIds.map(() => '?').join(',');
-      const selectedTemplates = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE id IN (${placeholders}) ORDER BY id`).bind(...selectedTemplateIds));
+      const selectedTemplates = [];
+      for (const batch of chunkArray(selectedTemplateIds, 200)) {
+        const placeholders = batch.map(() => '?').join(',');
+        const results = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE id IN (${placeholders}) ORDER BY id`).bind(...batch));
+        selectedTemplates.push(...results);
+      }
       if (selectedTemplates.length) variations = selectedTemplates;
     } else if (selectedBatches.length) {
-      const placeholders = selectedBatches.map(() => '?').join(',');
-      const batchTemplates = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE batch_name IN (${placeholders}) ORDER BY id`).bind(...selectedBatches));
+      const batchTemplates = [];
+      for (const batch of chunkArray(selectedBatches, 200)) {
+        const placeholders = batch.map(() => '?').join(',');
+        const results = await rows(env.DB.prepare(`SELECT subject, body_html, body_plain, batch_name FROM templates WHERE batch_name IN (${placeholders}) ORDER BY id`).bind(...batch));
+        batchTemplates.push(...results);
+      }
       if (batchTemplates.length) variations = batchTemplates;
     }
     const hasContent = body.subject?.trim() || body.body_html?.trim() || body.body_plain?.trim() || variations.some(value => value && (value.subject?.trim() || value.body_html?.trim() || value.body_plain?.trim()));
@@ -478,7 +495,19 @@ async function campaigns(request, env, parts, origin) {
     const contacts = await rows(env.DB.prepare('SELECT email FROM contacts WHERE list_name = ?').bind(campaign.contact_list));
     if (!accounts.length || !contacts.length) return json({ error: !accounts.length ? 'No active Gmail accounts connected' : 'No contacts found in this list' }, 400, origin);
     await env.DB.prepare("DELETE FROM queue WHERE campaign_id = ? AND status = 'pending'").bind(id).run();
-    await env.DB.batch(contacts.map((contact, index) => env.DB.prepare('INSERT INTO queue (campaign_id, recipient_email, account_id) VALUES (?, ?, ?)').bind(id, contact.email, accounts[index % accounts.length].id)));
+
+    const queueInserts = [];
+    for (let index = 0; index < contacts.length; index += 1) {
+      queueInserts.push({
+        email: contacts[index].email,
+        accountId: accounts[index % accounts.length].id,
+      });
+    }
+
+    for (const batch of chunkArray(queueInserts, SAFE_D1_BATCH_SIZE)) {
+      await runD1Batches(env.DB, batch.map(item => env.DB.prepare('INSERT INTO queue (campaign_id, recipient_email, account_id) VALUES (?, ?, ?)').bind(id, item.email, item.accountId)));
+    }
+
     await enqueuePendingMessages(env, id);
     await env.DB.prepare("UPDATE campaigns SET status = 'running', sent_count = 0, failed_count = 0 WHERE id = ?").bind(id).run();
     await invalidateDashboardCache(env, request);
@@ -503,7 +532,7 @@ async function contacts(request, env, parts, origin) {
     const body = await bodyJson(request); const raw = Array.isArray(body.emails) ? body.emails.join('\n') : String(body.emails || ''); const all = normalizeEmails(raw); const valid = all.filter(email => emailPattern.test(email));
     if (!body.list_name?.trim() || !valid.length) return json({ error: 'List name and valid emails are required' }, 400, origin);
     let added = 0;
-    for (const batch of chunkArray(valid, 500)) {
+    for (const batch of chunkArray(valid, SAFE_D1_BATCH_SIZE)) {
       const batchResults = await env.DB.batch(batch.map(email => env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(body.list_name.trim(), email)));
       added += batchResults.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
     }
@@ -517,7 +546,7 @@ async function contacts(request, env, parts, origin) {
     const valid = [...new Set(all.filter(email => emailPattern.test(email)))];
     if (!valid.length) return json({ error: 'No valid emails were found in the uploaded file' }, 400, origin);
     let added = 0;
-    for (const batch of chunkArray(valid, 500)) {
+    for (const batch of chunkArray(valid, SAFE_D1_BATCH_SIZE)) {
       const batchResults = await env.DB.batch(batch.map(email => env.DB.prepare('INSERT OR IGNORE INTO contacts (list_name, email) VALUES (?, ?)').bind(listName, email)));
       added += batchResults.reduce((sum, result) => sum + (result.meta?.changes || 0), 0);
     }
@@ -547,7 +576,7 @@ async function templates(request, env, parts, origin) {
     }
 
     const imported = [];
-    for (const batch of chunkArray(valid, 100)) {
+    for (const batch of chunkArray(valid, SAFE_D1_BATCH_SIZE)) {
       const statements = batch.map(template => env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?)')
         .bind(template.name, template.batch_name || 'General', template.subject, template.body_html, template.body_plain));
       const results = await env.DB.batch(statements);

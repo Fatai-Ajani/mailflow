@@ -55,25 +55,11 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    try {
-      const cached = localStorage.getItem('mailflow-dashboard');
-      if (cached) {
-        const snapshot = JSON.parse(cached);
-        const ageMs = snapshot?._cachedAt ? Date.now() - Number(snapshot._cachedAt) : Number.MAX_SAFE_INTEGER;
-        if (ageMs < 5 * 60 * 1000) {
-          setData(snapshot);
-          setLoading(false);
-          return;
-        }
-      }
-    } catch {
-      localStorage.removeItem('mailflow-dashboard');
-    }
     load();
   }, [load]);
 
   const { stats, campaigns } = data;
-  const runningCampaigns = (campaigns || []).filter(c => c.status === 'running');
+  const campaignList = (campaigns || []).filter(c => ['running', 'paused'].includes(c.status));
 
   return (
     <div>
@@ -134,20 +120,21 @@ export default function Dashboard() {
           <div style={s.row}>
             <div style={s.card}>
               <div style={s.cardTitle}>Active campaigns</div>
-              {runningCampaigns.length === 0 && (
-                <div style={{ fontSize: '13px', color: '#888' }}>No running campaigns</div>
+              {campaignList.length === 0 && (
+                <div style={{ fontSize: '13px', color: '#888' }}>No active or paused campaigns</div>
               )}
-              {runningCampaigns.map(c => {
+              {campaignList.map(c => {
                 const pct = c.total_contacts > 0 ? Math.round((c.sent_count / c.total_contacts) * 100) : 0;
+                const isRunning = c.status === 'running';
                 return (
                   <div key={c.id} style={s.campItem}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={s.campName}>{c.name}</div>
-                      <span style={s.pill}>{pct}%</span>
+                      <span style={{ ...s.pill, background: isRunning ? '#e6f1fb' : '#f5efe0', color: isRunning ? '#185FA5' : '#8a6a2b' }}>{isRunning ? 'Running' : 'Paused'}</span>
                     </div>
-                    <div style={s.campSub}>{c.total_contacts} contacts · {c.delay_seconds}s delay</div>
+                    <div style={s.campSub}>{c.total_contacts} contacts · {c.delay_seconds}s delay · {isRunning ? 'active' : 'paused'}</div>
                     <div style={s.progressBar}>
-                      <div style={{ ...s.progressFill, width: `${pct}%` }} />
+                      <div style={{ ...s.progressFill, width: `${pct}%`, background: isRunning ? '#185FA5' : '#b48a2f' }} />
                     </div>
                   </div>
                 );
