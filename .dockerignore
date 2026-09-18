@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+.env
+.dev.vars
+.git
+.gitignore
+frontend/node_modules
+frontend/build
+worker
+mailflow.db
+uploads/

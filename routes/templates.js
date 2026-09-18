@@ -11,6 +11,41 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.post('/import', async (req, res) => {
+  try {
+    const templates = Array.isArray(req.body.templates) ? req.body.templates : [];
+    if (templates.length === 0) {
+      return res.status(400).json({ error: 'No templates found in the import file' });
+    }
+
+    let count = 0;
+    const rejected = [];
+
+    for (let index = 0; index < templates.length; index += 1) {
+      const template = templates[index] || {};
+      const name = String(template.name || template.template_name || template.title || `Imported template ${index + 1}`).trim();
+      const subject = String(template.subject || template.email_subject || '').trim();
+      const bodyHtml = String(template.body_html || template.html || template.body || '').trim();
+      const bodyPlain = String(template.body_plain || template.plain_text || '').trim();
+
+      if (!subject && !bodyHtml && !bodyPlain) {
+        rejected.push(index + 1);
+        continue;
+      }
+
+      await db.run(`
+        INSERT INTO templates (name, subject, body_html, body_plain)
+        VALUES ($1, $2, $3, $4)
+      `, [name || `Imported template ${index + 1}`, subject, bodyHtml, bodyPlain]);
+      count += 1;
+    }
+
+    res.json({ success: true, count, rejected });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const template = await db.get('SELECT * FROM templates WHERE id = $1', [req.params.id]);

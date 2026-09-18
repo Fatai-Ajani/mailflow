@@ -2,12 +2,21 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined
 });
 
-async function initDB() {
-  const client = await pool.connect();
+const INITIALIZATION_RETRY_MS = 5000;
+const INITIALIZATION_MAX_RETRIES = 30;
+
+async function initDB(attempt = 1) {
+  if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL is not set. Set the Railway PostgreSQL connection string before starting the app.');
+    return;
+  }
+
+  let client;
   try {
+    client = await pool.connect();
     await client.query(`
       DROP TABLE IF EXISTS followup_queue, followups, exclusions CASCADE;
 
@@ -87,8 +96,18 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_queue_campaign_status ON queue (campaign_id, status);
     `);
     console.log('Database initialized successfully');
+  } catch (error) {
+    if (attempt <= INITIALIZATION_MAX_RETRIES) {
+      console.warn(`Database unavailable (${attempt}/${INITIALIZATION_MAX_RETRIES}): ${error.message}. Retrying in ${INITIALIZATION_RETRY_MS / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, INITIALIZATION_RETRY_MS));
+      return initDB(attempt + 1);
+    }
+
+    console.error('Database is still unavailable after retries. The app will keep running, but API/database features will not work until PostgreSQL is reachable.');
+    console.error(error.message);
+    return;
   } finally {
-    client.release();
+    if (client) client.release();
   }
 }
 
