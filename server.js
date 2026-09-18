@@ -42,12 +42,24 @@ app.get('/api/dashboard', async (req, res) => {
       sent: parseInt((await db.get("SELECT COUNT(*) as count FROM queue WHERE status = 'sent'")).count),
       failed: parseInt((await db.get("SELECT COUNT(*) as count FROM queue WHERE status = 'failed'")).count),
       today_sent: parseInt((await db.get("SELECT COUNT(*) as count FROM queue WHERE status = 'sent' AND DATE(sent_at) = CURRENT_DATE")).count),
-      active_campaigns: parseInt((await db.get("SELECT COUNT(*) as count FROM campaigns WHERE status = 'running'")).count),
+      active_campaigns: parseInt((await db.get(`
+        SELECT COUNT(DISTINCT c.id) as count
+        FROM campaigns c
+        JOIN queue q ON q.campaign_id = c.id AND q.status = 'pending'
+        WHERE c.status NOT IN ('draft', 'paused')
+      `)).count),
       active_accounts: parseInt((await db.get("SELECT COUNT(*) as count FROM accounts WHERE status = 'active'")).count),
     };
 
     const campaigns = await db.all(`
-      SELECT c.*, COUNT(q.id) FILTER (WHERE q.status = 'pending')::int AS pending_count
+      SELECT c.*,
+        CASE
+          WHEN COUNT(q.id) FILTER (WHERE q.status = 'pending') > 0
+            AND c.status NOT IN ('draft', 'paused')
+          THEN 'running'
+          ELSE c.status
+        END AS status,
+        COUNT(q.id) FILTER (WHERE q.status = 'pending')::int AS pending_count
       FROM campaigns c
       LEFT JOIN queue q ON q.campaign_id = c.id
       GROUP BY c.id

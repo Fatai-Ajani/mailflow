@@ -230,6 +230,15 @@ async function processCampaign(campaign) {
 
 async function processAllCampaigns() {
   try {
+    await db.run(`
+      UPDATE campaigns c
+      SET status = 'running'
+      WHERE c.status = 'completed'
+        AND EXISTS (
+          SELECT 1 FROM queue q
+          WHERE q.campaign_id = c.id AND q.status = 'pending'
+        )
+    `);
     const runningCampaigns = await db.all("SELECT * FROM campaigns WHERE status = 'running'");
     if (runningCampaigns.length === 0) return;
     await Promise.all(runningCampaigns.map(campaign => processCampaign(campaign)));
