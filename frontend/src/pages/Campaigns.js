@@ -263,6 +263,7 @@ export default function Campaigns() {
     try {
       const res = await createCampaign(buildPayload());
       await launchCampaign(res.data.id);
+      localStorage.removeItem('mailflow-dashboard');
       showMsg('Campaign launched!');
       resetForm();
       load();
@@ -272,21 +273,37 @@ export default function Campaigns() {
   const handleLaunch = async (id) => {
     const campaign = campaigns.find(item => item.id === id);
     if (!window.confirm(`Launch "${campaign?.name || 'this campaign'}" to ${campaign?.total_contacts || 0} recipients?\n\nThe scheduler will begin sending after launch.`)) return;
-    try { await launchCampaign(id); showMsg('Campaign launched!'); load(); }
-    catch (e) { showErr(e.response?.data?.error || 'Error launching'); }
+    try {
+      await launchCampaign(id);
+      localStorage.removeItem('mailflow-dashboard');
+      showMsg('Campaign launched!');
+      load();
+    } catch (e) { showErr(e.response?.data?.error || 'Error launching'); }
   };
 
   const handlePause = async (id) => {
-    try { await pauseCampaign(id); load(); } catch (e) { showErr('Error pausing'); }
+    try {
+      await pauseCampaign(id);
+      localStorage.removeItem('mailflow-dashboard');
+      load();
+    } catch (e) { showErr('Error pausing'); }
   };
 
   const handleResume = async (id) => {
-    try { await resumeCampaign(id); load(); } catch (e) { showErr('Error resuming'); }
+    try {
+      await resumeCampaign(id);
+      localStorage.removeItem('mailflow-dashboard');
+      load();
+    } catch (e) { showErr('Error resuming'); }
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this campaign?')) return;
-    try { await deleteCampaign(id); load(); } catch (e) { showErr('Error deleting'); }
+    try {
+      await deleteCampaign(id);
+      localStorage.removeItem('mailflow-dashboard');
+      load();
+    } catch (e) { showErr('Error deleting'); }
   };
 
   const getPillStyle = (status) => {

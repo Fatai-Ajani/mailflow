@@ -34,8 +34,9 @@ export default function Dashboard() {
     setRetrying(true);
     try {
       const res = await getDashboard();
-      setData(res.data);
-      localStorage.setItem('mailflow-dashboard', JSON.stringify(res.data));
+      const nextData = { ...res.data, _cachedAt: Date.now() };
+      setData(nextData);
+      localStorage.setItem('mailflow-dashboard', JSON.stringify(nextData));
       setOffline(false);
       setErrorMessage('');
       setLoading(false);
@@ -57,9 +58,13 @@ export default function Dashboard() {
     try {
       const cached = localStorage.getItem('mailflow-dashboard');
       if (cached) {
-        setData(JSON.parse(cached));
-        setLoading(false);
-        return;
+        const snapshot = JSON.parse(cached);
+        const ageMs = snapshot?._cachedAt ? Date.now() - Number(snapshot._cachedAt) : Number.MAX_SAFE_INTEGER;
+        if (ageMs < 5 * 60 * 1000) {
+          setData(snapshot);
+          setLoading(false);
+          return;
+        }
       }
     } catch {
       localStorage.removeItem('mailflow-dashboard');

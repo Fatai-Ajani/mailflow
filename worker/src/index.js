@@ -74,14 +74,34 @@ function templateStatus(template) {
   return hasSubject ? 'Subject + plain' : 'Plain only';
 }
 
+function coerceTemplateText(value) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) return value.join('\n');
+  if (typeof value === 'object') return JSON.stringify(value)
+    .replace(/\\u003c/gi, '<')
+    .replace(/\\u003e/gi, '>')
+    .replace(/\\u0026/gi, '&');
+  return String(value).trim();
+}
+
 function normalizeTemplate(value, index) {
-  const get = (...keys) => keys.map(key => value?.[key]).find(item => item !== undefined && item !== null) || '';
+  const get = (...keys) => {
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(value || {}, key)) return coerceTemplateText(value[key]);
+    }
+    return '';
+  };
+  const name = get('name', 'template_name', 'title') || `Imported template ${index + 1}`;
+  const batchName = get('batch_name', 'batch', 'group') || 'General';
+  const subject = get('subject', 'subject_line');
+  const htmlBody = get('body_html', 'html', 'html_body', 'content_html');
+  const plainBody = get('body_plain', 'plain_text', 'text', 'body_text', 'content_text', 'body');
   return {
-    name: String(get('name', 'template_name', 'title') || `Imported template ${index + 1}`).trim(),
-    batch_name: String(get('batch_name', 'batch', 'group') || 'General').trim(),
-    subject: String(get('subject', 'subject_line')).trim(),
-    body_html: String(get('body_html', 'html', 'html_body')).trim(),
-    body_plain: String(get('body_plain', 'plain_text', 'text', 'body_text')).trim(),
+    name: String(name).trim() || `Imported template ${index + 1}`,
+    batch_name: String(batchName).trim() || 'General',
+    subject: String(subject || '').trim(),
+    body_html: String(htmlBody || '').trim(),
+    body_plain: String(plainBody || '').trim(),
   };
 }
 
@@ -342,6 +362,16 @@ async function ensureDailyReset(env) {
   if (stale) await resetDailyCounts(env);
 }
 
+async function invalidateDashboardCache(env, request) {
+  try {
+    const url = request ? new URL('/api/dashboard', request.url) : (env.APP_ORIGIN ? new URL('/api/dashboard', env.APP_ORIGIN) : null);
+    if (!url) return;
+    await caches.default.delete(url);
+  } catch (error) {
+    console.warn('dashboard cache invalidation failed', error);
+  }
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   const origin = originFor(request, env);
@@ -355,18 +385,7 @@ async function handle(request, env) {
 
   if (parts[0] !== 'api') return json({ error: 'Not found' }, 404, origin);
   if (request.method === 'GET' && parts[1] === 'dashboard') {
-    const cacheKey = new Request(url.toString(), { method: 'GET' });
-    const cached = await caches.default.match(cacheKey);
-    if (cached) return cached;
-    const response = await dashboard(env, origin);
-    if (response.ok) {
-      const headers = new Headers(response.headers);
-      headers.set('cache-control', 'public, max-age=3600');
-      const cacheable = new Response(await response.text(), { status: response.status, headers });
-      await caches.default.put(cacheKey, cacheable.clone());
-      return cacheable;
-    }
-    return response;
+    return dashboard(env, origin);
   }
   const publicRoute = parts[1] === 'dashboard' || (parts[1] === 'accounts' && (parts[2] === 'auth' || parts[2] === 'callback'));
   if (!publicRoute) {
@@ -462,10 +481,19 @@ async function campaigns(request, env, parts, origin) {
     await env.DB.batch(contacts.map((contact, index) => env.DB.prepare('INSERT INTO queue (campaign_id, recipient_email, account_id) VALUES (?, ?, ?)').bind(id, contact.email, accounts[index % accounts.length].id)));
     await enqueuePendingMessages(env, id);
     await env.DB.prepare("UPDATE campaigns SET status = 'running', sent_count = 0, failed_count = 0 WHERE id = ?").bind(id).run();
+    await invalidateDashboardCache(env, request);
     return json({ success: true, queued: contacts.length }, 200, origin);
   }
-  if (request.method === 'POST' && (parts[1] === 'pause' || parts[1] === 'resume')) { await env.DB.prepare('UPDATE campaigns SET status = ? WHERE id = ?').bind(parts[1] === 'pause' ? 'paused' : 'running', id).run(); return json({ success: true }, 200, origin); }
-  if (request.method === 'DELETE') { await env.DB.batch([env.DB.prepare('DELETE FROM queue WHERE campaign_id = ?').bind(id), env.DB.prepare('DELETE FROM campaigns WHERE id = ?').bind(id)]); return json({ success: true }, 200, origin); }
+  if (request.method === 'POST' && (parts[1] === 'pause' || parts[1] === 'resume')) {
+    await env.DB.prepare('UPDATE campaigns SET status = ? WHERE id = ?').bind(parts[1] === 'pause' ? 'paused' : 'running', id).run();
+    await invalidateDashboardCache(env, request);
+    return json({ success: true }, 200, origin);
+  }
+  if (request.method === 'DELETE') {
+    await env.DB.batch([env.DB.prepare('DELETE FROM queue WHERE campaign_id = ?').bind(id), env.DB.prepare('DELETE FROM campaigns WHERE id = ?').bind(id)]);
+    await invalidateDashboardCache(env, request);
+    return json({ success: true }, 200, origin);
+  }
   return json({ error: 'Not found' }, 404, origin);
 }
 
@@ -504,20 +532,29 @@ async function templates(request, env, parts, origin) {
   if (request.method === 'GET' && !parts.length) return json(await rows(env.DB.prepare('SELECT * FROM templates ORDER BY created_at DESC')), 200, origin);
   if (request.method === 'POST' && parts[0] === 'import') {
     const body = await bodyJson(request);
-    const input = Array.isArray(body.templates) ? body.templates : [];
-    const imported = [];
+    const input = Array.isArray(body?.templates) ? body.templates : Array.isArray(body) ? body : [];
+    const valid = [];
     const rejected = [];
+
     for (let index = 0; index < input.length; index += 1) {
       const template = normalizeTemplate(input[index], index);
       const status = templateStatus(template);
       if (status === 'Missing subject and body') {
-        rejected.push({ row: index + 1, name: template.name, reason: status });
+        rejected.push({ row: index + 1, name: template.name || `Imported template ${index + 1}`, reason: status });
         continue;
       }
-      const currentChunk = imported.length;
-      const result = await env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(template.name, template.batch_name || 'General', template.subject, template.body_html, template.body_plain).first();
-      imported.push({ ...template, id: result.id, status, row: index + 1, chunkIndex: currentChunk });
+      valid.push({ ...template, status, row: index + 1 });
     }
+
+    const imported = [];
+    for (const batch of chunkArray(valid, 100)) {
+      const statements = batch.map(template => env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?)')
+        .bind(template.name, template.batch_name || 'General', template.subject, template.body_html, template.body_plain));
+      const results = await env.DB.batch(statements);
+      const successful = batch.filter((template, index) => Number(results[index]?.meta?.changes || 0) > 0).map(template => ({ ...template, inserted: true }));
+      imported.push(...successful);
+    }
+
     return json({ success: true, imported, rejected, count: imported.length, total: input.length }, 200, origin);
   }
   if (request.method === 'POST' && !parts.length) { const body = await bodyJson(request); if (!body.name?.trim()) return json({ error: 'Template name is required' }, 400, origin); const result = await env.DB.prepare('INSERT INTO templates (name, batch_name, subject, body_html, body_plain) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(body.name.trim(), body.batch_name?.trim() || 'General', body.subject || '', body.body_html || '', body.body_plain || '').first(); return json({ id: result.id, success: true }, 200, origin); }
