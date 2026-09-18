@@ -89,6 +89,18 @@ function makeEmail(to, fromName, fromEmail, subject, bodyHtml, bodyPlain, replyT
     headers.push(`References: ${replyToMessageId}`);
   }
 
+  if (!hasHtml && !hasPlain) {
+    return Buffer.from([
+      ...headers,
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      ''
+    ].join('\n')).toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  }
+
   headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
 
   const message = [
