@@ -52,11 +52,11 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: 'One or more selected templates no longer exist. Refresh Templates and try again.' });
       }
 
-      const incomplete = selectedTemplates.filter(template => !template.subject?.trim() || !(template.body_html?.trim() || template.body_plain?.trim()));
+      const incomplete = selectedTemplates.filter(template => !template.subject?.trim() && !(template.body_html?.trim() || template.body_plain?.trim()));
       if (incomplete.length > 0) {
         const examples = incomplete.slice(0, 3).map(template => template.name).join(', ');
         return res.status(400).json({
-          error: `${incomplete.length} selected template(s) need both a subject and a message body before this campaign can be saved. Examples: ${examples}`
+          error: `${incomplete.length} selected template(s) need a subject or a message body before this campaign can be saved. Examples: ${examples}`
         });
       }
 

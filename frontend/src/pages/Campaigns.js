@@ -179,8 +179,7 @@ export default function Campaigns() {
       setLists(l.data);
       setTemplates(t.data);
       setSelectedBatches(current => current.length ? current : [...new Set(t.data.map(template => template.batch_name || 'General'))]);
-      const completeTemplateIds = t.data.filter(template => Boolean(template.subject?.trim() && (template.body_html?.trim() || template.body_plain?.trim()))).map(template => template.id);
-      setSelectedTemplateIds(current => current.length ? current.filter(id => completeTemplateIds.includes(id)) : completeTemplateIds);
+      setSelectedTemplateIds(current => current.length ? current : t.data.map(template => template.id));
     } catch (e) { console.error(e); }
   };
 
@@ -188,10 +187,6 @@ export default function Campaigns() {
 
   const showMsg = (m) => { setMsg(m); setTimeout(() => setMsg(null), 5000); };
   const showErr = (e) => { setErr(e); setTimeout(() => setErr(null), 5000); };
-
-  const isCompleteTemplate = (template) => Boolean(
-    template.subject?.trim() && (template.body_html?.trim() || template.body_plain?.trim())
-  );
 
   const addVariation = () => setVariations([...variations, emptyVariation()]);
 
@@ -217,11 +212,11 @@ export default function Campaigns() {
       if (!html) return '';
       return html.replace(/\s+/g, ' ').replace(/>\s+</g, '><').trim();
     };
-    const selectedTemplates = templates.filter(template => selectedTemplateIds.includes(template.id) && isCompleteTemplate(template));
-    const incompleteTemplates = selectedTemplates.filter(template => !template.subject?.trim() || !(template.body_html?.trim() || template.body_plain?.trim()));
+    const selectedTemplates = templates.filter(template => selectedTemplateIds.includes(template.id));
+    const incompleteTemplates = selectedTemplates.filter(template => !template.subject?.trim() && !(template.body_html?.trim() || template.body_plain?.trim()));
     if (incompleteTemplates.length > 0) {
       const examples = incompleteTemplates.slice(0, 3).map(template => template.name).join(', ');
-      showErr(`${incompleteTemplates.length} selected template(s) need both a subject and a message body. Edit or remove them before continuing. Examples: ${examples}`);
+      showErr(`${incompleteTemplates.length} selected template(s) need a subject or a message body. Edit or remove them before continuing. Examples: ${examples}`);
       return null;
     }
     const sourceVariations = selectedTemplates.length > 0 ? selectedTemplates : variations;
@@ -433,15 +428,12 @@ export default function Campaigns() {
               <button
                 type="button"
                 style={s.btn}
-                onClick={() => {
-                  const completeTemplateIds = templates.filter(isCompleteTemplate).map(template => template.id);
-                  setSelectedTemplateIds(selectedTemplateIds.length === completeTemplateIds.length ? [] : completeTemplateIds);
-                }}
-                disabled={!templates.some(isCompleteTemplate)}
+                onClick={() => setSelectedTemplateIds(selectedTemplateIds.length === templates.length ? [] : templates.map(template => template.id))}
+                disabled={!templates.length}
               >
-                {selectedTemplateIds.length === templates.filter(isCompleteTemplate).length ? 'Clear all templates' : 'Select all complete templates'}
+                {selectedTemplateIds.length === templates.length ? 'Clear all templates' : 'Select all templates'}
               </button>
-              <span style={s.hintText}>{selectedTemplateIds.length} of {templates.filter(isCompleteTemplate).length} complete templates selected</span>
+              <span style={s.hintText}>{selectedTemplateIds.length} of {templates.length} templates selected</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px 14px', maxHeight: '180px', overflowY: 'auto', marginBottom: '12px' }}>
               {templates.map(template => (
@@ -449,10 +441,9 @@ export default function Campaigns() {
                   <input
                     type="checkbox"
                     checked={selectedTemplateIds.includes(template.id)}
-                    disabled={!isCompleteTemplate(template)}
                     onChange={event => setSelectedTemplateIds(current => event.target.checked ? [...current, template.id] : current.filter(id => id !== template.id))}
                   />
-                  <span>{template.name}{!isCompleteTemplate(template) ? ' (needs subject and body)' : ''}</span>
+                  <span>{template.name}</span>
                 </label>
               ))}
             </div>
