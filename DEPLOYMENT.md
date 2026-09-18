@@ -1,117 +1,136 @@
-# MailFlow deployment
+# MailFlow deployment on Railway
 
 ## Architecture
 
-- Frontend: Cloudflare Pages
-- API and scheduler: Cloudflare Workers
-- Database: Cloudflare D1
+- Frontend: static hosting or Cloudflare Pages
+- API and scheduler: Railway Node app
+- Database: Railway PostgreSQL
 - Source: GitHub
 - Email: Google Gmail API
 
-This architecture avoids Render/Railway sleep behavior and does not require a VPS. The Worker uses a Cron Trigger every minute to process pending campaign messages.
+This setup removes the Cloudflare D1 free-tier limits. The API runs as a long-lived Node process on Railway and uses PostgreSQL for campaign, queue, template, account, and contact data.
 
-### Production billing requirement
+## Why this migration matters
 
-MailFlow is not suitable for the Workers Free plan once it has real sending activity. D1 stops all queries after its daily free row-read or row-write allowance is reached. Enable the Cloudflare Workers Paid plan for the account that owns `mailflow-api`; it has a $5/month minimum and includes substantially higher monthly D1 allowances, with overage billed by usage. The change normally takes effect within minutes and does not require a database migration.
+Cloudflare D1 is not a safe long-term fit for a live email sender when the app is doing real campaign work. The free tier can hit row-read and row-write caps fast, which interrupts dashboard stats and queue processing.
 
-In the Cloudflare dashboard, open **Workers & Pages**, upgrade the account to **Workers Paid**, and confirm that `mailflow-api` is using the Standard usage model. For free-tier use, the dashboard endpoint is edge-cached for one hour and the frontend stores the last successful dashboard response locally. It does not poll D1 automatically; use Refresh when current numbers are needed.
+Railway PostgreSQL avoids that ceiling while preserving the same app behavior.
 
 ## Local setup
 
 From the repository root:
 
-```powershell
-cd worker
+```bash
 npm install
-npx wrangler login
-npm run dev
+cp .env.example .env
 ```
 
-Frontend development:
+Then fill in values in `.env`:
 
-```powershell
+```env
+DATABASE_URL=postgres://user:password@host:5432/dbname
+GOOGLE_CLIENT_ID=your_google_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+GOOGLE_REDIRECT_URI=https://your-railway-app.up.railway.app/api/accounts/callback
+APP_PIN=choose_a_strong_pin_here
+PUBLIC_API_URL=https://your-railway-app.up.railway.app
+PORT=3000
+```
+
+Start locally:
+
+```bash
+npm start
+```
+
+Frontend local dev:
+
+```bash
 cd frontend
 npm install
 npm start
 ```
 
-The local frontend API setting is in `frontend/.env`.
+Set the frontend environment variable to the Railway API URL:
 
-## Create the D1 database
-
-From `worker`:
-
-```powershell
-npx wrangler d1 create mailflow
+```env
+REACT_APP_API_URL=https://your-railway-app.up.railway.app
 ```
 
-Copy the returned database ID into `worker/wrangler.jsonc` in place of `REPLACE_WITH_D1_DATABASE_ID`, then apply the migration:
+## Railway database setup
 
-```powershell
-npx wrangler d1 migrations apply mailflow --remote
+1. Create a new Railway project.
+2. Add a PostgreSQL service.
+3. Copy the generated `DATABASE_URL` into the Railway service environment variables.
+4. Keep this value private; do not commit it.
+
+Once the database is available, the app will initialize tables automatically on boot using the existing PostgreSQL schema defined in `db.js`.
+
+## Railway app setup
+
+1. Create a new Railway service from this GitHub repository.
+2. Set the root directory to the repository root.
+3. Railway will use the included `railway.json` and `Dockerfile` automatically when supported.
+4. Add these environment variables in Railway:
+
+```env
+DATABASE_URL=postgres://...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=https://your-railway-app.up.railway.app/api/accounts/callback
+APP_PIN=...
+PUBLIC_API_URL=https://your-railway-app.up.railway.app
+PORT=3000
 ```
 
-## Configure Worker secrets
+5. Deploy the service.
 
-These are secrets and must not be committed to GitHub:
+### Callback URL for Google OAuth
 
-```powershell
-npx wrangler secret put APP_PIN
-npx wrangler secret put GOOGLE_CLIENT_ID
-npx wrangler secret put GOOGLE_CLIENT_SECRET
-npx wrangler secret put GOOGLE_REDIRECT_URI
-```
+Use the Railway deployment URL plus `/api/accounts/callback` in Google Cloud Console.
 
-Use this callback URL after deployment:
+Example:
 
 ```text
-https://mailflow-api.<your-subdomain>.workers.dev/api/accounts/callback
-```
-
-Update `APP_ORIGIN` in `worker/wrangler.jsonc` to the real Cloudflare Pages URL, then deploy:
-
-```powershell
-npm run deploy
+https://your-railway-app.up.railway.app/api/accounts/callback
 ```
 
 ## Google OAuth setup
 
-Google Cloud Console steps:
-
 1. Create or select a Google Cloud project.
-2. Enable **Gmail API**.
+2. Enable the Gmail API.
 3. Configure the OAuth consent screen.
-4. Choose **Create credentials** > **OAuth client ID**.
-5. Choose application type **Web application**.
-6. Add the Worker callback URL under **Authorized redirect URIs**.
-7. Add your Gmail address as a test user while the app is in testing.
+4. Create an OAuth client ID.
+5. Add the Railway callback URL under authorized redirect URIs.
+6. Add your Gmail address as a test user while the app is in testing.
 
-The OAuth client produces a Client ID and Client Secret. Those values are stored in Cloudflare Worker secrets, not in the repository.
+## Frontend deployment
 
-## Deploy the frontend
+The frontend can remain on Cloudflare Pages or be moved to any static host.
 
-Create a separate **Pages** project from the Cloudflare dashboard. Do not use `npx wrangler deploy` for this project; that command is only for the API Worker.
+Set:
 
-In Cloudflare Pages, import the GitHub repository with:
+```env
+REACT_APP_API_URL=https://your-railway-app.up.railway.app
+```
 
-- Root directory: `frontend`
-- Build command: `npm run build`
-- Output directory: `build`
-- Environment variable: `REACT_APP_API_URL=https://mailflow-api.<your-subdomain>.workers.dev`
+Build command:
 
-If the project has a **Deploy command** field, leave it empty. Cloudflare Pages runs the build command and publishes the output directory automatically.
+```bash
+npm run build
+```
 
-Cloudflare Pages must be connected to the current owner repository `Fatai-Ajani/mailflow`. Cloudflare Pages will provide a permanent `*.pages.dev` URL. Every push to the selected GitHub branch can trigger a new deployment.
+Publish the `frontend/build` output to the hosting provider.
 
 ## Source push
 
-Review the changes first, then push from the repository root:
+Review changes before deployment:
 
 ```bash
 git status
 git add .
-git commit -m "Migrate MailFlow to Cloudflare Workers and D1"
+git commit -m "Migrate MailFlow backend to Railway PostgreSQL"
 git push origin main
 ```
 
-Do not commit `.env`, OAuth secrets, or database credentials.
+Do not commit `.env` or database credentials.
