@@ -212,7 +212,15 @@ export default function Campaigns() {
       if (!html) return '';
       return html.replace(/\s+/g, ' ').replace(/>\s+</g, '><').trim();
     };
-    const compressedVariations = variations.map(v => ({
+    const selectedTemplates = templates.filter(template => selectedTemplateIds.includes(template.id));
+    const incompleteTemplates = selectedTemplates.filter(template => !template.subject?.trim() || !(template.body_html?.trim() || template.body_plain?.trim()));
+    if (incompleteTemplates.length > 0) {
+      const examples = incompleteTemplates.slice(0, 3).map(template => template.name).join(', ');
+      showErr(`${incompleteTemplates.length} selected template(s) need both a subject and a message body. Edit or remove them before continuing. Examples: ${examples}`);
+      return null;
+    }
+    const sourceVariations = selectedTemplates.length > 0 ? selectedTemplates : variations;
+    const compressedVariations = sourceVariations.map(v => ({
       ...v,
       body_html: compressHtml(v.body_html),
     }));
@@ -247,8 +255,10 @@ export default function Campaigns() {
 
   const handleSaveDraft = async () => {
     if (!validate()) return;
+    const payload = buildPayload();
+    if (!payload) return;
     try {
-      await createCampaign(buildPayload());
+      await createCampaign(payload);
       showMsg('Campaign saved as draft!');
       resetForm();
       load();
@@ -257,11 +267,13 @@ export default function Campaigns() {
 
   const handleCreateAndLaunch = async () => {
     if (!validate()) return;
+    const payload = buildPayload();
+    if (!payload) return;
     const list = lists.find(item => item.list_name === form.contact_list);
     const accountHint = 'active Gmail accounts will be used';
     if (!window.confirm(`Launch this campaign to ${list?.count || 0} recipients at a ${speed}s delay?\n\n${accountHint}. You can pause it after launch.`)) return;
     try {
-      const res = await createCampaign(buildPayload());
+      const res = await createCampaign(payload);
       await launchCampaign(res.data.id);
       localStorage.removeItem('mailflow-dashboard');
       showMsg('Campaign launched!');

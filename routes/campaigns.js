@@ -26,7 +26,7 @@ router.post('/', async (req, res) => {
     const {
       name, subject, body_html, body_plain,
       contact_list, delay_seconds, start_time, end_time,
-      schedule_type, content_variations, content_mode
+      schedule_type, content_variations, content_mode, template_ids
     } = req.body;
 
     // Only campaign name and contact list are required
@@ -38,6 +38,33 @@ router.post('/', async (req, res) => {
       parsedVariations = JSON.parse(content_variations || '[]');
     } catch (e) {
       parsedVariations = [];
+    }
+
+    const selectedTemplateIds = Array.isArray(template_ids)
+      ? [...new Set(template_ids.map(Number).filter(Number.isInteger))]
+      : [];
+    if (selectedTemplateIds.length > 0) {
+      const selectedTemplates = await db.all(
+        'SELECT id, name, subject, body_html, body_plain FROM templates WHERE id = ANY($1::int[]) ORDER BY id',
+        [selectedTemplateIds]
+      );
+      if (selectedTemplates.length !== selectedTemplateIds.length) {
+        return res.status(400).json({ error: 'One or more selected templates no longer exist. Refresh Templates and try again.' });
+      }
+
+      const incomplete = selectedTemplates.filter(template => !template.subject?.trim() || !(template.body_html?.trim() || template.body_plain?.trim()));
+      if (incomplete.length > 0) {
+        const examples = incomplete.slice(0, 3).map(template => template.name).join(', ');
+        return res.status(400).json({
+          error: `${incomplete.length} selected template(s) need both a subject and a message body before this campaign can be saved. Examples: ${examples}`
+        });
+      }
+
+      parsedVariations = selectedTemplates.map(template => ({
+        subject: template.subject,
+        body_html: template.body_html || '',
+        body_plain: template.body_plain || ''
+      }));
     }
 
     const hasContent = Boolean(
