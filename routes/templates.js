@@ -18,6 +18,7 @@ router.post('/import', async (req, res) => {
       return res.status(400).json({ error: 'No templates found in the import file' });
     }
 
+    res.set('Cache-Control', 'no-store');
     let count = 0;
     const rejected = [];
 
