@@ -233,8 +233,8 @@ export default function Templates() {
 
   useEffect(() => { load(); }, []);
 
-  const showMsg = (m) => { setMsg(m); setTimeout(() => setMsg(null), 4000); };
-  const showErr = (e) => { setErr(e); setTimeout(() => setErr(null), 4000); };
+  const showMsg = (m) => { setErr(null); setMsg(m); setTimeout(() => setMsg(null), 8000); };
+  const showErr = (e) => { setMsg(null); setErr(e); setTimeout(() => setErr(null), 10000); };
 
   const handleCreate = async (data) => {
     try {
@@ -287,17 +287,19 @@ export default function Templates() {
     if (!file) return;
     try {
       setImporting(true);
+      setErr(null);
+      setMsg(`Reading ${file.name}...`);
       const text = await file.text();
       let imported;
       const lowerName = file.name.toLowerCase();
       if (lowerName.endsWith('.json')) {
         const parsed = JSON.parse(text);
-        imported = Array.isArray(parsed) ? parsed : parsed.templates;
+        imported = Array.isArray(parsed) ? parsed : parsed.templates || parsed.data || parsed.items;
       } else if (lowerName.endsWith('.txt') || lowerName.endsWith('.csv')) {
         const trimmed = text.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
           const parsed = JSON.parse(trimmed);
-          imported = Array.isArray(parsed) ? parsed : parsed.templates;
+          imported = Array.isArray(parsed) ? parsed : parsed.templates || parsed.data || parsed.items;
         } else if (lowerName.endsWith('.txt') && /^\s*(subject|body)\s*:/im.test(text)) {
           imported = parseLabeledTemplates(text);
         } else {
@@ -307,16 +309,18 @@ export default function Templates() {
         imported = parseCsv(text);
       }
       if (!Array.isArray(imported) || imported.length === 0) throw new Error('No templates found');
+      setMsg(`Uploading ${imported.length.toLocaleString()} template(s)...`);
       const response = await importTemplates(imported);
       const rejected = response.data.rejected?.length || 0;
       showMsg(`Imported ${response.data.count} template(s)${rejected ? ` · ${rejected} empty row(s) skipped` : ''}.`);
       setShowImport(false);
-      load();
+      await load();
     } catch (error) {
-      showErr(error.response?.data?.error || 'Import failed. Use JSON or CSV with name, subject, body_html, and body_plain columns.');
+      const serverMessage = error.response?.data?.error;
+      showErr(serverMessage || error.message || 'Import failed. Use JSON or CSV with name, subject, body_html, and body_plain columns.');
     } finally {
       setImporting(false);
-      event.target.value = '';
+      if (event.target) event.target.value = '';
     }
   };
 
