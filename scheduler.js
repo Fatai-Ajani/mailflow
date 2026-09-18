@@ -250,3 +250,4 @@ cron.schedule('*/2 * * * * *', async () => {
 });
 
 console.log('Scheduler started — campaigns every 2s');
+
