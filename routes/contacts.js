@@ -15,10 +15,13 @@ function normalizeEmails(value) {
 router.get('/lists', async (req, res) => {
   try {
     const lists = await db.all(`
-      SELECT list_name, COUNT(*) as count, MAX(created_at) as created_at
-      FROM contacts
-      GROUP BY list_name
-      ORDER BY MAX(created_at) DESC
+      SELECT cl.list_name,
+             COUNT(c.id) AS count,
+             MAX(c.created_at) AS created_at
+      FROM contact_lists cl
+      LEFT JOIN contacts c ON c.list_name = cl.list_name
+      GROUP BY cl.list_name, cl.created_at
+      ORDER BY cl.created_at DESC, cl.list_name ASC
     `);
     res.json(lists);
   } catch (err) {
@@ -45,11 +48,14 @@ router.post('/manual', async (req, res) => {
       return res.status(400).json({ error: 'List name and emails are required' });
     }
 
+    const listName = String(list_name).trim();
+    if (!listName) return res.status(400).json({ error: 'List name is required' });
+    await db.run('INSERT INTO contact_lists (list_name) VALUES ($1) ON CONFLICT (list_name) DO NOTHING', [listName]);
+
     const normalized = normalizeEmails(emails.join('\n'));
     const validEmails = normalized.filter(email => EMAIL_PATTERN.test(email));
     if (validEmails.length === 0) return res.status(400).json({ error: 'No valid email addresses found' });
 
-    const listName = list_name.trim();
     const conflicts = await db.all(
       'SELECT email, list_name FROM contacts WHERE email = ANY($1::text[]) AND list_name <> $2',
       [validEmails, listName]
@@ -92,6 +98,9 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         const normalized = normalizeEmails(emails.join('\n'));
         const validEmails = normalized.filter(email => EMAIL_PATTERN.test(email));
         const listName = String(list_name || '').trim();
+        if (listName) {
+          await db.run('INSERT INTO contact_lists (list_name) VALUES ($1) ON CONFLICT (list_name) DO NOTHING', [listName]);
+        }
         const conflicts = await db.all(
           'SELECT email, list_name FROM contacts WHERE email = ANY($1::text[]) AND list_name <> $2',
           [validEmails, listName]
@@ -120,6 +129,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 router.delete('/lists/:name', async (req, res) => {
   try {
     await db.run('DELETE FROM contacts WHERE list_name = $1', [req.params.name]);
+    await db.run('DELETE FROM contact_lists WHERE list_name = $1', [req.params.name]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

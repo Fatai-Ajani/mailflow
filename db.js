@@ -40,6 +40,16 @@ async function initDB(attempt = 1) {
         created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       );
 
+      CREATE TABLE IF NOT EXISTS contact_lists (
+        id SERIAL PRIMARY KEY,
+        list_name TEXT NOT NULL UNIQUE,
+        created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+      );
+
+      INSERT INTO contact_lists (list_name)
+      VALUES ('Contact_1'), ('Contact_2'), ('Contact_3')
+      ON CONFLICT (list_name) DO NOTHING;
+
       UPDATE contacts SET email = lower(trim(email));
       DELETE FROM contacts older
       USING contacts newer

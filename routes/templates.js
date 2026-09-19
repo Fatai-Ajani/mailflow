@@ -117,8 +117,9 @@ router.post('/delete-bulk', async (req, res) => {
       : [];
     if (ids.length === 0) return res.status(400).json({ error: 'No templates selected' });
 
-    const result = await db.run('DELETE FROM templates WHERE id = ANY($1::int[])', [ids]);
-    res.json({ success: true, deleted: result.rowCount });
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
+    const result = await db.run(`DELETE FROM templates WHERE id IN (${placeholders})`, ids);
+    res.json({ success: true, deleted: result.rowCount ?? ids.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
