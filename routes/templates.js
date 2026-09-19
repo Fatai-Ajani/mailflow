@@ -91,6 +91,20 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+router.post('/delete-bulk', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids)
+      ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))]
+      : [];
+    if (ids.length === 0) return res.status(400).json({ error: 'No templates selected' });
+
+    const result = await db.run('DELETE FROM templates WHERE id = ANY($1::int[])', [ids]);
+    res.json({ success: true, deleted: result.rowCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/:id', async (req, res) => {
   try {
     await db.run('DELETE FROM templates WHERE id = $1', [req.params.id]);

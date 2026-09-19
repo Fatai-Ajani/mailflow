@@ -46,6 +46,7 @@ export const getTemplate = (id) => API.get(`/api/templates/${id}`);
 export const createTemplate = (data) => API.post('/api/templates', data);
 export const updateTemplate = (id, data) => API.put(`/api/templates/${id}`, data);
 export const deleteTemplate = (id) => API.delete(`/api/templates/${id}`);
+export const deleteTemplatesBulk = (ids) => API.post('/api/templates/delete-bulk', { ids });
 export const importTemplates = (templates) => API.post('/api/templates/import', { templates });
 
 // Contacts

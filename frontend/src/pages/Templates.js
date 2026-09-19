@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate, importTemplates } from '../api';
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, deleteTemplatesBulk, importTemplates } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -275,11 +275,11 @@ export default function Templates() {
     if (!selectedIds.length) return showErr('Select at least one template first');
     if (!window.confirm(`Delete ${selectedIds.length} selected template(s)? This cannot be undone.`)) return;
     try {
-      await Promise.all(selectedIds.map(id => deleteTemplate(id)));
+      await deleteTemplatesBulk(selectedIds);
       setSelectedIds([]);
       showMsg('Selected templates deleted');
-      load();
-    } catch (e) { showErr('Error deleting selected templates'); }
+      await load();
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error deleting selected templates'); }
   };
 
   const handleImportFile = async (event) => {
