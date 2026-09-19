@@ -14,8 +14,12 @@ router.get('/', async (req, res) => {
 router.post('/import', async (req, res) => {
   try {
     const templates = Array.isArray(req.body.templates) ? req.body.templates : [];
+    const importBatchName = String(req.body.batch_name || '').trim();
     if (templates.length === 0) {
       return res.status(400).json({ error: 'No templates found in the import file' });
+    }
+    if (!importBatchName) {
+      return res.status(400).json({ error: 'Template batch name is required' });
     }
 
     res.set('Cache-Control', 'no-store');
@@ -25,7 +29,7 @@ router.post('/import', async (req, res) => {
     for (let index = 0; index < templates.length; index += 1) {
       const template = templates[index] || {};
       const name = String(template.name || template.template_name || template.title || `Imported template ${index + 1}`).trim();
-      const batchName = String(template.batch_name || template.batch || 'General').trim() || 'General';
+      const batchName = importBatchName;
       const subject = String(template.subject || template.email_subject || '').trim();
       const bodyHtml = String(template.body_html || template.html || template.body || '').trim();
       const bodyPlain = String(template.body_plain || template.plain_text || '').trim();
@@ -100,6 +104,17 @@ router.post('/delete-bulk', async (req, res) => {
 
     const result = await db.run('DELETE FROM templates WHERE id = ANY($1::int[])', [ids]);
     res.json({ success: true, deleted: result.rowCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/batch/:batchName', async (req, res) => {
+  try {
+    const batchName = String(req.params.batchName || '').trim();
+    if (!batchName) return res.status(400).json({ error: 'Template batch name is required' });
+    const result = await db.run('DELETE FROM templates WHERE batch_name = $1', [batchName]);
+    res.json({ success: true, deleted: result.rowCount, batch_name: batchName });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

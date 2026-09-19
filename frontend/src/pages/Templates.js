@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate, deleteTemplatesBulk, importTemplates } from '../api';
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, deleteTemplatesBulk, deleteTemplateBatch, importTemplates } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -222,6 +222,7 @@ export default function Templates() {
   const [showImport, setShowImport] = useState(true);
   const [importing, setImporting] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [importBatchName, setImportBatchName] = useState('');
   const fileInputRef = useRef(null);
 
   const load = async () => {
@@ -282,12 +283,23 @@ export default function Templates() {
     } catch (e) { showErr(e.response?.data?.error || e.message || 'Error deleting selected templates'); }
   };
 
+  const handleDeleteBatch = async (batchName, count) => {
+    if (!window.confirm(`Delete all ${count} template(s) in "${batchName}"? This cannot be undone.`)) return;
+    try {
+      await deleteTemplateBatch(batchName);
+      setSelectedIds([]);
+      showMsg(`Deleted ${count} template(s) from ${batchName}.`);
+      await load();
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error deleting template batch'); }
+  };
+
   const handleImportFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
       setImporting(true);
       setErr(null);
+      if (!importBatchName.trim()) throw new Error('Enter a template batch name before choosing a file.');
       setMsg(`Reading ${file.name}...`);
       const text = await file.text();
       let imported;
@@ -310,10 +322,11 @@ export default function Templates() {
       }
       if (!Array.isArray(imported) || imported.length === 0) throw new Error('No templates found');
       setMsg(`Uploading ${imported.length.toLocaleString()} template(s)...`);
-      const response = await importTemplates(imported);
+      const response = await importTemplates(imported, importBatchName.trim());
       const rejected = response.data.rejected?.length || 0;
       showMsg(`Imported ${response.data.count} template(s)${rejected ? ` · ${rejected} empty row(s) skipped` : ''}.`);
       setShowImport(false);
+      setImportBatchName('');
       await load();
     } catch (error) {
       const serverMessage = error.response?.data?.error;
@@ -334,6 +347,11 @@ export default function Templates() {
       bothFormats: result.bothFormats + (Boolean(template.body_html?.trim()) && Boolean(template.body_plain?.trim()) ? 1 : 0),
     };
   }, { total: 0, complete: 0, subjectOnly: 0, bodyOnly: 0, bothFormats: 0 });
+  const groupedTemplates = templates.reduce((groups, template) => {
+    const batchName = template.batch_name || 'General';
+    (groups[batchName] ||= []).push(template);
+    return groups;
+  }, {});
 
   return (
     <div>
@@ -356,6 +374,14 @@ export default function Templates() {
       {showImport && (
         <div style={s.importBox}>
           <div style={s.cardTitle}>Import templates</div>
+
+          <div style={s.label}>Template batch name <span style={{ color: '#A32D2D' }}>*</span></div>
+          <input
+            style={s.input}
+            placeholder="e.g. Shopify follow-up"
+            value={importBatchName}
+            onChange={event => setImportBatchName(event.target.value)}
+          />
 
           <div style={{ fontSize: '12px', color: '#718078', lineHeight: '1.7', marginBottom: '12px' }}>
             <strong>What is required:</strong> each template needs a name, and at least one usable content field: subject, HTML body, or plain text body. Empty rows are skipped.
@@ -426,7 +452,7 @@ body: This template has a body but no subject.`}</div>
           </div>
 
           <input ref={fileInputRef} type="file" accept=".json,.csv,.txt,application/json,text/csv,text/plain" onChange={handleImportFile} style={{ display: 'none' }} />
-          <button style={s.btnPrimary} onClick={() => fileInputRef.current?.click()} disabled={importing}>
+          <button style={s.btnPrimary} onClick={() => { if (!importBatchName.trim()) return showErr('Enter a template batch name before choosing a file.'); fileInputRef.current?.click(); }} disabled={importing}>
             {importing ? 'Importing...' : 'Choose JSON, CSV or TXT'}
           </button>
           <button style={s.btn} onClick={() => setShowImport(false)}>Hide guide</button>
@@ -459,7 +485,7 @@ body: This template has a body but no subject.`}</div>
           <div style={s.countBox}><strong>{counts.bodyOnly}</strong><div style={s.hint}>Body only</div></div>
           <div style={s.countBox}><strong>{counts.bothFormats}</strong><div style={s.hint}>HTML + plain</div></div>
         </div>
-        <div style={s.cardTitle}>Saved templates ({templates.length})</div>
+        <div style={s.cardTitle}>Template batches ({Object.keys(groupedTemplates).length})</div>
         {templates.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
             <button style={s.btn} onClick={toggleAll}>
@@ -473,7 +499,13 @@ body: This template has a body but no subject.`}</div>
         {templates.length === 0 && (
           <div style={s.emptyBox}>No templates yet. Create one above.</div>
         )}
-        {templates.map(t => (
+        {Object.entries(groupedTemplates).map(([batchName, batchTemplates]) => (
+          <div key={batchName} style={{ marginBottom: '18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #e0e0d8' }}>
+              <strong>{batchName} ({batchTemplates.length})</strong>
+              <button style={s.btnDanger} onClick={() => handleDeleteBatch(batchName, batchTemplates.length)}>Delete batch</button>
+            </div>
+            {batchTemplates.map(t => (
           <div key={t.id}>
             <div style={s.templateRow}>
               <input
@@ -501,6 +533,8 @@ body: This template has a body but no subject.`}</div>
             {expandedId === t.id && !t.body_html && t.body_plain && (
               <div style={s.previewBox}>{t.body_plain}</div>
             )}
+          </div>
+            ))}
           </div>
         ))}
       </div>
