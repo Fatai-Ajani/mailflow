@@ -18,9 +18,14 @@ const s = {
   editorHeader: { padding: '7px 12px', background: '#f5f5f0', borderBottom: '0.5px solid #ccc', fontSize: '12px', fontWeight: '500', color: '#666' },
   editorTextarea: { width: '100%', fontSize: '12px', padding: '10px', border: 'none', borderRight: '0.5px solid #ccc', resize: 'none', minHeight: '220px', fontFamily: 'monospace', lineHeight: '1.6', outline: 'none', background: '#fff' },
   plainTextarea: { width: '100%', fontSize: '13px', padding: '8px 10px', borderRadius: '8px', border: '0.5px solid #ccc', background: '#fff', resize: 'vertical', minHeight: '80px', lineHeight: '1.6', outline: 'none', fontFamily: 'inherit' },
-  templateRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '0.5px solid #e0e0d8' },
-  templateName: { fontSize: '14px', fontWeight: '500', color: '#111' },
-  templateSub: { fontSize: '12px', color: '#888', marginTop: '2px' },
+  templateRow: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', border: '0.5px solid #e0e0d8', borderRadius: '10px', background: '#fff', minHeight: '120px' },
+  templateName: { fontSize: '13px', fontWeight: '500', color: '#111', lineHeight: '1.4' },
+  templateSub: { fontSize: '11px', color: '#888', marginTop: '2px', lineHeight: '1.5' },
+  templateListScroll: { maxHeight: '420px', overflowY: 'auto', paddingRight: '4px', marginTop: '10px' },
+  templateGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' },
+  templateCard: { display: 'flex', flexDirection: 'column', gap: '8px', border: '0.5px solid #e0e0d8', borderRadius: '10px', padding: '10px', background: '#fff' },
+  templateMeta: { fontSize: '11px', color: '#666', lineHeight: '1.45' },
+  templateActions: { display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: 'auto' },
   success: { background: '#eaf3de', border: '0.5px solid #c0dd97', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#3B6D11', marginBottom: '12px' },
   error: { background: '#fcebeb', border: '0.5px solid #f7c1c1', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#A32D2D', marginBottom: '12px' },
   infoBox: { background: '#e6f1fb', border: '0.5px solid #b5d4f4', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#185FA5', marginBottom: '16px' },
@@ -486,36 +491,45 @@ body: This template has a body but no subject.`}</div>
         {templates.length === 0 && (
           <div style={s.emptyBox}>No templates yet. Create one above.</div>
         )}
-        {templates.map(t => (
-          <div key={t.id}>
-            <div style={s.templateRow}>
-              <input
-                type="checkbox"
-                checked={selectedIds.includes(t.id)}
-                onChange={() => toggleSelected(t.id)}
-                aria-label={`Select ${t.name}`}
-              />
-              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
-                <div style={s.templateName}>{t.name}</div>
-                <div style={s.templateSub}>
-                  {t.batch_name || 'General'} · {templateStatus(t)}
-                  {' · '}
-                  {t.body_html ? 'Has HTML' : t.body_plain ? 'Plain text only' : 'No body'}
-                  {' · '}
-                  {new Date(t.created_at).toLocaleDateString()}
+        {templates.length > 0 && (
+          <div style={s.templateListScroll}>
+            <div style={s.templateGrid}>
+              {templates.map(t => (
+                <div key={t.id} style={s.templateCard}>
+                  <div style={s.templateRow}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(t.id)}
+                      onChange={() => toggleSelected(t.id)}
+                      aria-label={`Select ${t.name}`}
+                    />
+                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}>
+                      <div style={s.templateName}>{t.name}</div>
+                      <div style={s.templateSub}>
+                        {t.batch_name || 'General'} · {templateStatus(t)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={s.templateMeta}>
+                    {t.body_html ? 'HTML body' : t.body_plain ? 'Plain text only' : 'No body'}
+                    {' · '}
+                    {new Date(t.created_at).toLocaleDateString()}
+                  </div>
+                  <div style={s.templateActions}>
+                    <button style={s.btn} onClick={() => { setEditingTemplate(t); setShowForm(false); }}>Edit</button>
+                    <button style={s.btnDanger} onClick={() => handleDelete(t.id, t.name)}>Delete</button>
+                  </div>
+                  {expandedId === t.id && t.body_html && (
+                    <div style={{ ...s.previewBox, marginTop: '0' }} dangerouslySetInnerHTML={{ __html: t.body_html }} />
+                  )}
+                  {expandedId === t.id && !t.body_html && t.body_plain && (
+                    <div style={{ ...s.previewBox, marginTop: '0' }}>{t.body_plain}</div>
+                  )}
                 </div>
-              </div>
-              <button style={s.btn} onClick={() => { setEditingTemplate(t); setShowForm(false); }}>Edit</button>
-              <button style={s.btnDanger} onClick={() => handleDelete(t.id, t.name)}>Delete</button>
+              ))}
             </div>
-            {expandedId === t.id && t.body_html && (
-              <div style={s.previewBox} dangerouslySetInnerHTML={{ __html: t.body_html }} />
-            )}
-            {expandedId === t.id && !t.body_html && t.body_plain && (
-              <div style={s.previewBox}>{t.body_plain}</div>
-            )}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

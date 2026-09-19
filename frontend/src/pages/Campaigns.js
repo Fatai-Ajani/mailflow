@@ -54,6 +54,12 @@ const s = {
   templatePickRow: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' },
   templatePickSelect: { flex: 1, fontSize: '13px', padding: '7px 10px', borderRadius: '8px', border: '0.5px solid #ccc', background: '#fff' },
   templatePickBtn: { padding: '7px 14px', fontSize: '12px', borderRadius: '8px', border: 'none', background: '#534AB7', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  batchSelectorGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', maxHeight: '180px', overflowY: 'auto', marginBottom: '12px', paddingRight: '4px' },
+  batchSelectorCard: { display: 'flex', alignItems: 'center', gap: '8px', border: '0.5px solid #d7d7d1', borderRadius: '10px', padding: '10px 12px', background: '#fff', minHeight: '52px' },
+  batchSelectorCardActive: { borderColor: '#185FA5', background: '#e6f1fb' },
+  batchSelectorList: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', maxHeight: '220px', overflowY: 'auto', marginBottom: '12px', paddingRight: '4px' },
+  templateBatchCard: { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', border: '0.5px solid #d7d7d1', borderRadius: '10px', background: '#fff', minHeight: '52px' },
+  templateBatchCardSelected: { borderColor: '#185FA5', background: '#e6f1fb' },
   hintText: { fontSize: '11px', color: '#aaa', fontWeight: '400' },
 };
 
@@ -442,23 +448,23 @@ export default function Campaigns() {
               </button>
               <span style={s.hintText}>{selectedTemplateIds.length} templates selected</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px 14px', maxHeight: '180px', overflowY: 'auto', marginBottom: '12px' }}>
+            <div style={s.templateBatchCard ? s.batchSelectorList : s.batchSelectorList}>
               {templates.filter(template => (template.batch_name || 'General') === selectedBatches[0]).map(template => (
-                <label key={template.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                <label key={template.id} style={{ ...s.templateBatchCard, ...(selectedTemplateIds.includes(template.id) ? s.templateBatchCardSelected : {}) }}>
                   <input
                     type="checkbox"
                     checked={selectedTemplateIds.includes(template.id)}
                     onChange={event => setSelectedTemplateIds(current => event.target.checked ? [...current, template.id] : current.filter(id => id !== template.id))}
                   />
-                  <span>{template.name}</span>
+                  <span style={{ fontSize: '12px', lineHeight: '1.4' }}>{template.name}</span>
                 </label>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            <div style={s.batchSelectorGrid}>
               {[...new Set(templates.map(template => template.batch_name || 'General'))].map(batch => (
-                <label key={batch} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
+                <label key={batch} style={{ ...s.batchSelectorCard, ...(selectedBatches[0] === batch ? s.batchSelectorCardActive : {}) }}>
                   <input type="radio" name="campaign-template-batch" checked={selectedBatches[0] === batch} onChange={() => { setSelectedBatches([batch]); setSelectedTemplateIds(templates.filter(template => (template.batch_name || 'General') === batch).map(template => template.id)); }} />
-                  {batch}
+                  <span style={{ fontSize: '12px', lineHeight: '1.4' }}>{batch}</span>
                 </label>
               ))}
               {!templates.length && <span style={s.hintText}>Create templates and assign batches first.</span>}
