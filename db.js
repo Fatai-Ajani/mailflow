@@ -79,7 +79,9 @@ async function initDB(attempt = 1) {
         created_at TEXT DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       );
 
-      ALTER TABLE templates ADD COLUMN IF NOT EXISTS batch_name TEXT DEFAULT 'General';
+      ALTER TABLE templates ADD COLUMN IF NOT EXISTS batch_name TEXT DEFAULT '';
+      DELETE FROM templates WHERE lower(trim(COALESCE(batch_name, ''))) = 'general';
+      UPDATE templates SET batch_name = '' WHERE batch_name IS NULL;
 
       CREATE TABLE IF NOT EXISTS queue (
         id SERIAL PRIMARY KEY,
