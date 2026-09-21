@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getTemplates, createTemplate, updateTemplate, deleteTemplate, deleteTemplatesBulk, importTemplates } from '../api';
+import { getTemplates, createTemplate, updateTemplate, deleteTemplate, deleteTemplatesBulk, deleteTemplatesByBatch, importTemplates } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -288,6 +288,17 @@ export default function Templates() {
     } catch (e) { showErr(e.response?.data?.error || e.message || 'Error deleting selected templates'); }
   };
 
+  const handleDeleteBatch = async (batchName, batchTemplates) => {
+    if (!batchName || !batchTemplates.length) return;
+    if (!window.confirm(`Delete all ${batchTemplates.length} template(s) in batch "${batchName}"? This cannot be undone.`)) return;
+    try {
+      const response = await deleteTemplatesByBatch(batchName);
+      setSelectedIds(current => current.filter(id => !batchTemplates.some(template => template.id === id)));
+      showMsg(`Deleted ${response.data.deleted} template(s) from batch "${batchName}"`);
+      await load();
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error deleting template batch'); }
+  };
+
   const handleImportFile = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -344,6 +355,13 @@ export default function Templates() {
       bothFormats: result.bothFormats + (Boolean(template.body_html?.trim()) && Boolean(template.body_plain?.trim()) ? 1 : 0),
     };
   }, { total: 0, complete: 0, subjectOnly: 0, bodyOnly: 0, bothFormats: 0 });
+
+  const templatesByBatch = templates.reduce((result, template) => {
+    const batchName = template.batch_name || 'General';
+    if (!result[batchName]) result[batchName] = [];
+    result[batchName].push(template);
+    return result;
+  }, {});
 
   return (
     <div>
@@ -486,6 +504,22 @@ body: This template has a body but no subject.`}</div>
             <button style={s.btnDanger} onClick={handleDeleteSelected} disabled={!selectedIds.length}>
               Delete selected{selectedIds.length ? ` (${selectedIds.length})` : ''}
             </button>
+          </div>
+        )}
+        {templates.length > 0 && Object.keys(templatesByBatch).length > 0 && (
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ ...s.hint, marginBottom: '6px' }}>Delete by batch</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {Object.entries(templatesByBatch).map(([batchName, batchTemplates]) => (
+                <button
+                  key={batchName}
+                  style={s.btnDanger}
+                  onClick={() => handleDeleteBatch(batchName, batchTemplates)}
+                >
+                  Delete {batchName} ({batchTemplates.length})
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {templates.length === 0 && (

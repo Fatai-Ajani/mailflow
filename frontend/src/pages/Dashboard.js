@@ -124,7 +124,8 @@ export default function Dashboard() {
                 <div style={{ fontSize: '13px', color: '#888' }}>No active or paused campaigns</div>
               )}
               {campaignList.map(c => {
-                const pct = c.total_contacts > 0 ? Math.round((c.sent_count / c.total_contacts) * 100) : 0;
+                const processed = Number(c.sent_count || 0) + Number(c.failed_count || 0);
+                const pct = c.total_contacts > 0 ? Math.min(100, Math.round((processed / c.total_contacts) * 100)) : 0;
                 const isRunning = c.status === 'running';
                 return (
                   <div key={c.id} style={s.campItem}>
@@ -132,7 +133,7 @@ export default function Dashboard() {
                       <div style={s.campName}>{c.name}</div>
                       <span style={{ ...s.pill, background: isRunning ? '#e6f1fb' : '#f5efe0', color: isRunning ? '#185FA5' : '#8a6a2b' }}>{isRunning ? 'Running' : 'Paused'}</span>
                     </div>
-                    <div style={s.campSub}>{c.total_contacts} contacts · {c.delay_seconds}s delay · {isRunning ? 'active' : 'paused'}</div>
+                    <div style={s.campSub}>{pct}% processed · {c.sent_count || 0}/{c.total_contacts || 0} sent · {c.failed_count || 0} failed · {c.delay_seconds}s delay</div>
                     <div style={s.progressBar}>
                       <div style={{ ...s.progressFill, width: `${pct}%`, background: isRunning ? '#185FA5' : '#b48a2f' }} />
                     </div>

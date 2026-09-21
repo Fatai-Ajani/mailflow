@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getCampaigns, createCampaign, launchCampaign, pauseCampaign, resumeCampaign, deleteCampaign, getContactLists, getTemplates } from '../api';
+import { getCampaigns, createCampaign, launchCampaign, startCampaignNow, updateCampaignSchedule, pauseCampaign, resumeCampaign, deleteCampaign, getContactLists, getTemplates } from '../api';
 
 const s = {
   title: { fontSize: '20px', fontWeight: '500', color: '#111', marginBottom: '4px' },
@@ -173,20 +173,33 @@ export default function Campaigns() {
   const [selectedBatches, setSelectedBatches] = useState([]);
   const [selectedTemplateIds, setSelectedTemplateIds] = useState([]);
   const [scheduleType, setScheduleType] = useState('immediate');
+  const [editingSchedule, setEditingSchedule] = useState(null);
   const [form, setForm] = useState({
     name: '', contact_list: '',
     start_time: '08:00', end_time: '22:00'
   });
 
   const load = async () => {
-    try {
-      const [c, l, t] = await Promise.all([getCampaigns(), getContactLists(), getTemplates()]);
-      setCampaigns(c.data);
-      setLists(l.data);
-      setTemplates(t.data);
+    const results = await Promise.allSettled([getCampaigns(), getContactLists(), getTemplates()]);
+    const [campaignResult, listResult, templateResult] = results;
+
+    if (campaignResult.status === 'fulfilled') {
+      setCampaigns(Array.isArray(campaignResult.value.data) ? campaignResult.value.data : []);
+    } else {
+      console.error('Unable to load campaigns', campaignResult.reason);
+      showErr(campaignResult.reason?.response?.data?.error || 'Unable to load campaigns');
+    }
+
+    if (listResult.status === 'fulfilled') setLists(Array.isArray(listResult.value.data) ? listResult.value.data : []);
+    else console.error('Unable to load contact lists', listResult.reason);
+
+    if (templateResult.status === 'fulfilled') {
+      setTemplates(Array.isArray(templateResult.value.data) ? templateResult.value.data : []);
       setSelectedBatches(current => current.length ? [current[0]] : []);
       setSelectedTemplateIds(current => current.length ? current : []);
-    } catch (e) { console.error(e); }
+    } else {
+      console.error('Unable to load templates', templateResult.reason);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -271,7 +284,7 @@ export default function Campaigns() {
       showMsg('Campaign saved as draft!');
       resetForm();
       load();
-    } catch (e) { showErr('Error saving campaign'); }
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error saving campaign'); }
   };
 
   const handleCreateAndLaunch = async () => {
@@ -288,7 +301,7 @@ export default function Campaigns() {
       showMsg('Campaign launched!');
       resetForm();
       load();
-    } catch (e) { showErr(e.response?.data?.error || 'Error launching campaign'); }
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error launching campaign'); }
   };
 
   const handleLaunch = async (id) => {
@@ -300,6 +313,27 @@ export default function Campaigns() {
       showMsg('Campaign launched!');
       load();
     } catch (e) { showErr(e.response?.data?.error || 'Error launching'); }
+  };
+
+  const handleStartNow = async (id) => {
+    const campaign = campaigns.find(item => item.id === id);
+    if (!window.confirm(`Start "${campaign?.name || 'this campaign'}" immediately and ignore its saved time window?`)) return;
+    try {
+      await startCampaignNow(id);
+      localStorage.removeItem('mailflow-dashboard');
+      showMsg('Campaign started immediately.');
+      load();
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error starting campaign'); }
+  };
+
+  const handleSaveSchedule = async () => {
+    if (!editingSchedule) return;
+    try {
+      await updateCampaignSchedule(editingSchedule.id, editingSchedule);
+      setEditingSchedule(null);
+      showMsg('Campaign schedule updated.');
+      load();
+    } catch (e) { showErr(e.response?.data?.error || e.message || 'Error updating schedule'); }
   };
 
   const handlePause = async (id) => {
@@ -518,22 +552,37 @@ export default function Campaigns() {
             <div style={{ flex: 1 }}>
               <div style={s.campName}>{c.name}</div>
               <div style={s.campSub}>
-                {c.contact_list} · {c.delay_seconds}s delay · {c.sent_count}/{c.total_contacts} sent
-                {c.failed_count > 0 && <span style={{ color: '#A32D2D' }}> · {c.failed_count} failed</span>}
+                {Math.min(100, Math.round(((Number(c.sent_count || 0) + Number(c.failed_count || 0)) / Math.max(1, Number(c.total_contacts || 0))) * 100))}% processed · {c.sent_count || 0}/{c.total_contacts || 0} sent · {c.failed_count || 0} failed · {c.contact_list} · {c.delay_seconds}s delay
                 {c.content_variations && (() => {
                   try { return ` · ${JSON.parse(c.content_variations).length} variations`; }
                   catch (e) { return ''; }
                 })()}
               </div>
               <div style={s.progressBar}>
-                <div style={{ ...s.progressFill, width: `${getPct(c)}%` }} />
+                <div style={{ ...s.progressFill, width: `${Math.min(100, Math.round(((Number(c.sent_count || 0) + Number(c.failed_count || 0)) / Math.max(1, Number(c.total_contacts || 0))) * 100))}%` }} />
               </div>
             </div>
             <span style={getPillStyle(c.status)}>{c.status}</span>
+            <button style={s.btn} onClick={() => setEditingSchedule({ id: c.id, schedule_type: c.schedule_type || 'immediate', start_time: c.start_time || '00:00', end_time: c.end_time || '23:59' })}>Edit schedule</button>
             {c.status === 'draft' && <button style={s.btn} onClick={() => handleLaunch(c.id)}>Launch</button>}
+            {c.status === 'running' && c.schedule_type === 'window' && <button style={s.btnSuccess} onClick={() => handleStartNow(c.id)}>Start now</button>}
             {c.status === 'running' && <button style={s.btn} onClick={() => handlePause(c.id)}>Pause</button>}
             {c.status === 'paused' && <button style={s.btn} onClick={() => handleResume(c.id)}>Resume</button>}
             <button style={s.btnDanger} onClick={() => handleDelete(c.id)}>Delete</button>
+            {editingSchedule?.id === c.id && (
+              <div style={{ width: '100%', marginTop: '8px', padding: '10px', background: '#f5f5f0', borderRadius: '8px' }}>
+                <select style={{ ...s.select, width: '160px', marginRight: '8px' }} value={editingSchedule.schedule_type} onChange={e => setEditingSchedule({ ...editingSchedule, schedule_type: e.target.value })}>
+                  <option value="immediate">Immediate</option>
+                  <option value="window">Time window</option>
+                </select>
+                {editingSchedule.schedule_type === 'window' && <>
+                  <input style={{ ...s.input, width: '120px', marginRight: '8px' }} type="time" value={editingSchedule.start_time} onChange={e => setEditingSchedule({ ...editingSchedule, start_time: e.target.value })} />
+                  <input style={{ ...s.input, width: '120px', marginRight: '8px' }} type="time" value={editingSchedule.end_time} onChange={e => setEditingSchedule({ ...editingSchedule, end_time: e.target.value })} />
+                </>}
+                <button style={s.btnSuccess} onClick={handleSaveSchedule}>Save schedule</button>
+                <button style={s.btn} onClick={() => setEditingSchedule(null)}>Cancel</button>
+              </div>
+            )}
           </div>
         ))}
       </div>

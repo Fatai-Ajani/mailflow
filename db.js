@@ -90,7 +90,7 @@ async function initDB(attempt = 1) {
       );
 
       ALTER TABLE templates ADD COLUMN IF NOT EXISTS batch_name TEXT DEFAULT '';
-      DELETE FROM templates WHERE lower(trim(COALESCE(batch_name, ''))) = 'general';
+      DELETE FROM templates WHERE lower(trim(COALESCE(batch_name, ''))) IN ('', 'general');
       UPDATE templates SET batch_name = '' WHERE batch_name IS NULL;
 
       CREATE TABLE IF NOT EXISTS queue (

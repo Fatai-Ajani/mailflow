@@ -36,6 +36,8 @@ export const getCampaigns = () => API.get('/api/campaigns');
 export const getCampaign = (id) => API.get(`/api/campaigns/${id}`);
 export const createCampaign = (data) => API.post('/api/campaigns', data);
 export const launchCampaign = (id) => API.post(`/api/campaigns/${id}/launch`);
+export const startCampaignNow = (id) => API.post(`/api/campaigns/${id}/launch`, { start_now: true });
+export const updateCampaignSchedule = (id, data) => API.put(`/api/campaigns/${id}/schedule`, data);
 export const pauseCampaign = (id) => API.post(`/api/campaigns/${id}/pause`);
 export const resumeCampaign = (id) => API.post(`/api/campaigns/${id}/resume`);
 export const deleteCampaign = (id) => API.delete(`/api/campaigns/${id}`);
@@ -46,7 +48,17 @@ export const getTemplate = (id) => API.get(`/api/templates/${id}`);
 export const createTemplate = (data) => API.post('/api/templates', data);
 export const updateTemplate = (id, data) => API.put(`/api/templates/${id}`, data);
 export const deleteTemplate = (id) => API.delete(`/api/templates/${id}`);
-export const deleteTemplatesBulk = (ids) => API.post('/api/templates/delete-bulk', { ids });
+export const deleteTemplatesBulk = async (ids) => {
+  try {
+    return await API.post('/api/templates/delete-bulk', { ids });
+  } catch (error) {
+    if (error.response?.status === 404 || error.response?.status === 405) {
+      return API.delete('/api/templates/delete-bulk', { data: { ids } });
+    }
+    throw error;
+  }
+};
+export const deleteTemplatesByBatch = (batch_name) => API.post('/api/templates/batch-delete', { batch_name });
 export const importTemplates = (templates, batch_name) => API.post('/api/templates/import', { templates, batch_name });
 
 // Contacts

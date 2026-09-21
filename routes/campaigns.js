@@ -127,6 +127,16 @@ router.post('/:id/launch', async (req, res) => {
     const campaign = await db.get('SELECT * FROM campaigns WHERE id = $1', [req.params.id]);
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
+    if (req.body?.start_now === true) {
+      await db.run(
+        "UPDATE campaigns SET schedule_type = 'immediate', start_time = '00:00', end_time = '23:59' WHERE id = $1",
+        [campaign.id]
+      );
+      campaign.schedule_type = 'immediate';
+      campaign.start_time = '00:00';
+      campaign.end_time = '23:59';
+    }
+
     try {
       const vars = JSON.parse(campaign.content_variations || '[]');
       console.log(`Launching campaign "${campaign.name}" with ${vars.length} variations:`);
@@ -176,6 +186,28 @@ router.post('/:id/launch', async (req, res) => {
     );
 
     res.json({ success: true, queued: contacts.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/:id/schedule', async (req, res) => {
+  try {
+    const campaign = await db.get('SELECT id FROM campaigns WHERE id = $1', [req.params.id]);
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
+
+    const scheduleType = req.body?.schedule_type === 'window' ? 'window' : 'immediate';
+    const startTime = req.body?.start_time || '00:00';
+    const endTime = req.body?.end_time || '23:59';
+    if (scheduleType === 'window' && (!/^\d{2}:\d{2}$/.test(startTime) || !/^\d{2}:\d{2}$/.test(endTime))) {
+      return res.status(400).json({ error: 'A valid sending window is required' });
+    }
+
+    await db.run(
+      'UPDATE campaigns SET schedule_type = $1, start_time = $2, end_time = $3 WHERE id = $4',
+      [scheduleType, scheduleType === 'window' ? startTime : '00:00', scheduleType === 'window' ? endTime : '23:59', req.params.id]
+    );
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

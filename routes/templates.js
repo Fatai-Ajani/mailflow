@@ -2,10 +2,44 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-const normalizeBatchName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+const normalizeBatchName = (value) => {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized || normalized.toLowerCase() === 'general') return '';
+  return normalized;
+};
+const cleanupLegacyGeneralTemplates = async () => {
+  await db.run(`DELETE FROM templates WHERE batch_name IS NULL OR lower(trim(COALESCE(batch_name, ''))) IN ('', 'general')`);
+};
+
+const deleteTemplatesByIds = async (ids) => {
+  const uniqueIds = [...new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!uniqueIds.length) return { deleted: 0 };
+
+  const result = await db.run('DELETE FROM templates WHERE id = ANY($1::int[])', [uniqueIds]);
+
+  return { deleted: result.rowCount ?? uniqueIds.length };
+};
+
+const deleteAllTemplates = async () => {
+  await db.run('DELETE FROM templates');
+  return { deleted: true };
+};
+
+const deleteTemplatesByBatchName = async (batchName) => {
+  const normalizedBatchName = normalizeBatchName(batchName);
+  if (!normalizedBatchName) return { deleted: 0 };
+
+  const result = await db.run(
+    'DELETE FROM templates WHERE lower(trim(batch_name)) = lower(trim($1))',
+    [normalizedBatchName]
+  );
+
+  return { deleted: result.rowCount ?? 0 };
+};
 
 router.get('/', async (req, res) => {
   try {
+    await cleanupLegacyGeneralTemplates();
     const templates = await db.all(`
       SELECT * FROM templates
       WHERE lower(trim(COALESCE(batch_name, ''))) <> 'general'
@@ -29,7 +63,7 @@ router.post('/import', async (req, res) => {
       return res.status(400).json({ error: 'No templates found in the import file' });
     }
 
-    await db.run(`DELETE FROM templates WHERE lower(trim(COALESCE(batch_name, ''))) = 'general'`);
+    await cleanupLegacyGeneralTemplates();
 
     res.set('Cache-Control', 'no-store');
     let count = 0;
@@ -60,8 +94,101 @@ router.post('/import', async (req, res) => {
   }
 });
 
+router.post('/bulk-delete', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'No templates selected' });
+
+    const result = await deleteTemplatesByIds(ids);
+    res.json({ success: true, deleted: result.deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/bulk-delete', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : (Array.isArray(req.query?.ids) ? req.query.ids : []);
+    if (!ids.length) return res.status(400).json({ error: 'No templates selected' });
+
+    const result = await deleteTemplatesByIds(ids);
+    res.json({ success: true, deleted: result.deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/delete-bulk', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'No templates selected' });
+
+    const result = await deleteTemplatesByIds(ids);
+    res.json({ success: true, deleted: result.deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/delete-bulk', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : (Array.isArray(req.query?.ids) ? req.query.ids : []);
+    if (!ids.length) return res.status(400).json({ error: 'No templates selected' });
+
+    const result = await deleteTemplatesByIds(ids);
+    res.json({ success: true, deleted: result.deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/batch-delete', async (req, res) => {
+  try {
+    const batchName = req.body?.batch_name || req.body?.batch || '';
+    if (!normalizeBatchName(batchName)) return res.status(400).json({ error: 'A valid batch name is required' });
+
+    const result = await deleteTemplatesByBatchName(batchName);
+    res.json({ success: true, batch_name: normalizeBatchName(batchName), deleted: result.deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/batch-delete/:batchName', async (req, res) => {
+  try {
+    const batchName = decodeURIComponent(req.params.batchName || '');
+    if (!normalizeBatchName(batchName)) return res.status(400).json({ error: 'A valid batch name is required' });
+
+    const result = await deleteTemplatesByBatchName(batchName);
+    res.json({ success: true, batch_name: normalizeBatchName(batchName), deleted: result.deleted });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/delete-all', async (req, res) => {
+  try {
+    const result = await deleteAllTemplates();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/delete-all', async (req, res) => {
+  try {
+    const result = await deleteAllTemplates();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
+    if (!/^\d+$/.test(String(req.params.id || ''))) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
     const template = await db.get('SELECT * FROM templates WHERE id = $1', [req.params.id]);
     if (!template) return res.status(404).json({ error: 'Template not found' });
     res.json(template);
@@ -110,23 +237,11 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.post('/delete-bulk', async (req, res) => {
-  try {
-    const ids = Array.isArray(req.body.ids)
-      ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))]
-      : [];
-    if (ids.length === 0) return res.status(400).json({ error: 'No templates selected' });
-
-    const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
-    const result = await db.run(`DELETE FROM templates WHERE id IN (${placeholders})`, ids);
-    res.json({ success: true, deleted: result.rowCount ?? ids.length });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 router.delete('/:id', async (req, res) => {
   try {
+    if (!/^\d+$/.test(String(req.params.id || ''))) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
     await db.run('DELETE FROM templates WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
